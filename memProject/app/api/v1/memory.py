@@ -772,140 +772,159 @@ async def memory_stats(
 # 上下文 — 对齐前端对接文档 二.1 节
 # ============================================================
 
-@router.post("/context", summary="Prompt 上下文片段")
+# Context assembly helpers
+GROUP_TITLES = {
+    "preference": "## User Preferences",
+    "fact": "## Key Facts",
+    "task_state": "## Task State",
+    "process": "## Process Experience",
+}
+TYPE_PRIORITY = {"preference": 1, "fact": 2, "task_state": 3, "process": 4}
+CONTENT_MAX_LEN = 200
+SCORE_MIN_THRESHOLD = 0.5
+MAX_MEMORY_COUNT = 10
+
+
+@router.post("/context", summary="Prompt context fragment")
 async def memory_context(
     body: ContextRequest,
     request: Request,
     db: AsyncSession = Depends(get_db),
     agent_id: str = Depends(get_current_agent),
 ):
-    """
-    Prompt 上下文。
-
-    三层聚合 — 不混入原始记忆碎片，仅返回结构化聚合结果 + LLM 总结。
-    """
+    """Prompt context: search -> group by type -> assemble within capacity budget."""
     try:
-        aggregation = {}
-        scope_type = None
+        from app.core.qdrant_client import qdrant_client as _qd
+        from app.services.embedding_client import embedding_client as _emb
+        from app.models.base import MemoryVector, Memory
+        from sqlalchemy import select as _sel
+        import math as _math
 
+        # Step 1: Search
+        query_vector = await _emb.embed_single(body.query)
+        payload_filters = {}
+        if body.scene_id:
+            payload_filters["scene_id"] = body.scene_id
         if body.task_id:
-            scope_type = "task_view"
-            task_view = await get_task_view(db, body.task_id)
-            aggregation = {
-                "type": "task_view",
-                "task_id": body.task_id,
-                "goal": task_view["current_goal"]["content"] if task_view.get("current_goal") else "",
-                "timeline": [
-                    {"stage": item.get("sub_type", "progress"), "content": item["content"]}
-                    for item in task_view.get("timeline", [])
-                ],
-                "constraints": [item["content"] for item in task_view.get("constraints", [])],
-                "processes": [item["content"] for item in task_view.get("processes", [])],
-                "decisions": [item["content"] for item in task_view.get("decisions", [])],
-                "facts": [item["content"] for item in task_view.get("facts", [])],
-            }
+            payload_filters["task_id"] = body.task_id
+        if body.session_id:
+            payload_filters["session_id"] = body.session_id
 
-        elif body.session_id:
-            scope_type = "session_context"
-            sess_ctx = await get_session_context(db, body.session_id)
-            by_type_clean = {
-                k: [item["content"] for item in v]
-                for k, v in sess_ctx.get("by_type", {}).items()
-            }
-            aggregation = {
-                "type": "session_context",
-                "session_id": body.session_id,
-                "by_type": by_type_clean,
-                "key_items": [
-                    {"type": item["memory_type"], "content": item["content"]}
-                    for item in sess_ctx.get("key_items", [])
-                ],
-            }
+        top_k = body.top_k or 10
+        hits = _qd.search_similar(
+            query_vector=query_vector,
+            user_id=body.user_id,
+            top_k=max(top_k * 3, 30),
+            payload_filters=payload_filters if payload_filters else None,
+        )
+        if not hits:
+            return ok({"formatted_text": "", "memory_count": 0, "estimated_tokens": 0})
 
-        elif body.include_preferences or body.include_facts:
-            scope_type = "user_profile"
-            profile = await get_user_profile(db, body.user_id)
-            aggregation = {
-                "type": "user_profile",
-                "user_id": body.user_id,
-                "preferences": profile.get("preferences", []),
-                "facts": profile.get("facts", []),
-            }
+        # Step 2: T_MEMORY_VECTOR bridge -> T_MEMORY
+        point_scores = {str(h["id"]): float(h["score"]) if h["score"] is not None else 0.0 for h in hits}
+        mv_result = await db.execute(
+            _sel(MemoryVector).where(MemoryVector.vector_store_id.in_(list(point_scores.keys())))
+        )
+        id_map = {}
+        for mv in mv_result.scalars().all():
+            id_map[mv.memory_id] = point_scores.get(mv.vector_store_id, 0.0)
+        if not id_map:
+            return ok({"formatted_text": "", "memory_count": 0, "estimated_tokens": 0})
 
-        # LLM 总结
-        formatted_text = ""
-        contents = []
-        for key, val in aggregation.items():
-            if key in ("preferences", "facts") and isinstance(val, list):
-                contents.extend(val)
-            elif key == "goal" and val:
-                contents.append(val)
-            elif key == "timeline" and isinstance(val, list):
-                contents.extend(item["content"] for item in val)
-            elif key == "by_type" and isinstance(val, dict):
-                for items in val.values():
-                    contents.extend(items)
-            elif key == "key_items" and isinstance(val, list):
-                contents.extend(item["content"] for item in val)
+        mem_query = _sel(Memory).where(Memory.memory_id.in_(list(id_map.keys())))
+        if body.memory_types:
+            mem_query = mem_query.where(Memory.memory_type.in_(body.memory_types))
+        if body.status:
+            mem_query = mem_query.where(Memory.status.in_(body.status))
+        else:
+            mem_query = mem_query.where(Memory.status == "active")
+        mem_result = await db.execute(mem_query)
+        db_memories = {m.memory_id: m for m in mem_result.scalars().all()}
 
-        if contents:
-            try:
-                from app.services.llm_client import llm_client as _llm
-                memory_count = min(len(contents), 20)  # 实际送入 LLM 的条目数
-                lines = "\n".join(f"- {c[:200]}" for c in contents[:memory_count])
-                formatted_text = await _llm.chat_completion([{
-                    "role": "user",
-                    "content": f"将以下记忆碎片总结为一段通顺的摘要，注入AI对话上下文。保留关键信息，去除冗余：\n{lines}"
-                }], max_tokens=body.max_tokens or 500)
-            except Exception:
-                pass
+        # Step 3: Re-rank + filter
+        now_dt = datetime.now(timezone.utc)
+        HALF_LIFE_DAYS = 30
+        scored = []
+        for memory_id, mem_score in id_map.items():
+            mem = db_memories.get(memory_id)
+            if not mem:
+                continue
+            ms = mem_score or 0
+            recency_val = 0.5
+            if mem.created_at:
+                try:
+                    cd = mem.created_at.replace(tzinfo=None) if mem.created_at.tzinfo else mem.created_at
+                    age_seconds = max(0, (now_dt.replace(tzinfo=None) - cd).total_seconds())
+                    age_days = age_seconds / 86400
+                    recency_val = _math.pow(0.5, age_days / HALF_LIFE_DAYS)
+                except Exception:
+                    pass
+            final_score = round(
+                (ms or 0) * 0.6 + recency_val * 0.15
+                + (mem.importance or 0.5) * 0.15 + (mem.confidence or 0.5) * 0.1, 4
+            )
+            if final_score < SCORE_MIN_THRESHOLD:
+                continue
+            scored.append({
+                "content": mem.content or "",
+                "summary": mem.summary or "",
+                "memory_type": mem.memory_type or "fact",
+                "relevance_score": final_score,
+            })
+        if not scored:
+            return ok({"formatted_text": "", "memory_count": 0, "estimated_tokens": 0})
 
-        # 设置 context_snapshot 供日志中间件合并到 ApiLog
-        # 仅 formatted_text 非空时才写入，避免空快照污染 latest_context
-        if formatted_text:
-            generated_at = datetime.now(timezone.utc)
-            trace_id = getattr(request.state, "trace_id", None)
-            request.state.context_snapshot = {
-                "version": 1,
-                "query": body.query,
-                "formatted_text": formatted_text,
-                "memory_count": memory_count,
-                "memory_ids": [],  # TODO: 从聚合来源记录原始 memory_id，当前仅追踪数量
-                "return_mode": "aggregation",
-                "scope_type": scope_type,
-                "user_id": body.user_id,
-                "agent_id": agent_id,
-                "scene_id": body.scene_id,
-                "session_id": body.session_id,
-                "task_id": body.task_id,
-                "generated_at": generated_at.isoformat(),
-                "trace_id": trace_id,
-            }
+        # Step 4: Group by type + sort
+        scored.sort(key=lambda x: x["relevance_score"], reverse=True)
+        groups = {}
+        for item in scored:
+            mt = item["memory_type"]
+            if mt == "correction":
+                continue
+            groups.setdefault(mt, []).append(item)
+        sorted_types = sorted(
+            [t for t in groups if t in TYPE_PRIORITY],
+            key=lambda t: TYPE_PRIORITY[t],
+        )
 
-        return ok({
-            "aggregation": aggregation,
-            "formatted_text": formatted_text,
-            "estimated_tokens": len(formatted_text) // 2 if formatted_text else 0,
-        })
+        # Step 5: Assemble within budget
+        max_tokens = body.max_tokens or 3000
+        lines = []
+        token_estimate = 0
+        memory_count = 0
+        for mt in sorted_types:
+            if memory_count >= MAX_MEMORY_COUNT:
+                break
+            title = GROUP_TITLES.get(mt, f"## {mt}")
+            lines.append(title)
+            token_estimate += len(title) // 2
+            for item in groups[mt]:
+                if memory_count >= MAX_MEMORY_COUNT:
+                    break
+                text = item["content"]
+                if len(text) > CONTENT_MAX_LEN and item["summary"]:
+                    text = item["summary"]
+                line = f"- {text}"
+                est = len(line) // 2
+                if token_estimate + est > max_tokens:
+                    break
+                lines.append(line)
+                token_estimate += est
+                memory_count += 1
+            if token_estimate >= max_tokens:
+                break
+
+        formatted_text = "\n".join(lines) if lines else ""
+        return ok({"formatted_text": formatted_text, "memory_count": memory_count, "estimated_tokens": token_estimate})
+
     except Exception as e:
         logger.error(f"Context generation failed: {e}")
         return error(
-            message="上下文生成失败",
+            message="Context generation failed",
             code=-2,
-            data={
-                "aggregation": {},
-                "formatted_text": "",
-                "estimated_tokens": 0,
-            },
+            data={"formatted_text": "", "memory_count": 0, "estimated_tokens": 0},
             error_code="CONTEXT_FAILED",
         )
-
-
-# ============================================================
-# 更新 — 对齐前端对接文档 二.2 节
-# ============================================================
-
-@router.put("/update", summary="更新记忆")
 async def memory_update(
     body: MemoryUpdateRequest,
     db: AsyncSession = Depends(get_db),
