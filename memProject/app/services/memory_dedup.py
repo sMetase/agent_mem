@@ -219,20 +219,33 @@ class DedupService:
                 "composite_score": None,
             })
 
-        # Stage 2: 从 PostgreSQL 加载完整记忆
-        # 注意：Qdrant point id 是 _str_to_uuid(memory_id) 转换后的 UUID，
-        # 与 DB 的 memory_id（mem_xxx）不同，必须用 payload.memory_id 关联
-        hit_id_map = {}  # memory_id → score
-        for h in hits:
-            mem_id = (h.get("payload") or {}).get("memory_id") or str(h["id"])
-            hit_id_map[mem_id] = h["score"]
+        # Stage 2: T_MEMORY_VECTOR 桥接 → T_MEMORY 加载已有记忆
+        from app.models.base import MemoryVector
+        point_scores = {str(h["id"]): h["score"] for h in hits}
+
+        try:
+            mv_result = await db.execute(
+                select(MemoryVector).where(
+                    MemoryVector.vector_store_id.in_(list(point_scores.keys()))
+                )
+            )
+            # vector_store_id → memory_id
+            vid_to_mid = {mv.vector_store_id: mv.memory_id for mv in mv_result.scalars().all()}
+        except Exception as e:
+            logger.warning(f"T_MEMORY_VECTOR lookup failed for dedup: {e}")
+            return self._make_keep_new(candidate, "桥接表查询失败，保留新记忆")
+
+        if not vid_to_mid:
+            return self._make_keep_new(candidate, "无匹配桥接记录")
+
+        mid_scores = {vid_to_mid[vid]: point_scores[vid] for vid in vid_to_mid if vid in point_scores}
 
         existing_memories: list[Memory] = []
         try:
             result = await db.execute(
                 select(Memory).where(
-                    Memory.memory_id.in_(list(hit_id_map.keys())),
-                    Memory.status.in_(["active", "pending"]),  # 仅匹配活跃/待验证记忆
+                    Memory.memory_id.in_(list(mid_scores.keys())),
+                    Memory.status.in_(["active", "pending"]),
                 )
             )
             existing_memories = list(result.scalars().all())
@@ -245,7 +258,7 @@ class DedupService:
 
         # 为每个已有记忆计算相似度
         similar_memories: list[SimilarMemory] = []
-        hit_score_map = hit_id_map
+        hit_score_map = mid_scores
 
         for existing in existing_memories:
             vector_score = hit_score_map.get(existing.memory_id, 0.0)
@@ -567,10 +580,12 @@ class DedupService:
         """
         # ===== 第一步：相似度匹配 =====
         if vector_score < similarity_threshold:
+            logger.info(f"DEDUP_GATE: step1 FAIL vector={vector_score:.3f} < {similarity_threshold}")
             return DedupAction.KEEP_NEW
 
         # ===== 第二步：结构化匹配（关键词 + 类型） =====
         if keyword_overlap < keyword_threshold:
+            logger.info(f"DEDUP_GATE: step2 FAIL keyword={keyword_overlap:.3f} < {keyword_threshold}")
             return DedupAction.KEEP_NEW
 
         if candidate and best_match and existing_memories:
@@ -579,10 +594,12 @@ class DedupService:
                 None,
             )
             if existing and existing.memory_type != candidate.memory_type:
+                logger.info(f"DEDUP_GATE: step2 FAIL type mismatch candidate={candidate.memory_type} existing={existing.memory_type}")
                 return DedupAction.KEEP_NEW
 
         # ===== 第三步：标识校验 =====
         if not identity_match:
+            logger.info(f"DEDUP_GATE: step3 FAIL identity_match=False")
             return DedupAction.KEEP_NEW
 
         # ===== 第四步：融合决策 =====
