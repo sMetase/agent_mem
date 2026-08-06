@@ -23,7 +23,7 @@ from app.services.memory_extractor import ExtractionResult
 logger = get_logger("memory_generator")
 
 VALID_MEMORY_TYPES = {
-    "fact", "preference", "task_state", "decision", "constraint", "process", "correction",
+    "fact", "preference", "task_state", "process", "correction",
 }
 
 
@@ -91,15 +91,13 @@ class MemoryGenerator:
                 current_progress=data.get("current_progress", ""),
                 completed_items=json.dumps(data.get("completed_items", []), ensure_ascii=False),
                 pending_items=json.dumps(data.get("pending_items", []), ensure_ascii=False),
-                confirmed_plans=json.dumps(data.get("confirmed_plans", []), ensure_ascii=False),
-                selection_rationale=json.dumps(data.get("selection_rationale", []), ensure_ascii=False),
-                execution_results=json.dumps(data.get("execution_results", []), ensure_ascii=False),
                 style_preferences=json.dumps(data.get("style_preferences", []), ensure_ascii=False),
                 habitual_preferences=json.dumps(data.get("habitual_preferences", []), ensure_ascii=False),
                 decision_tendencies=json.dumps(data.get("decision_tendencies", []), ensure_ascii=False),
                 execution_actions=json.dumps(data.get("execution_actions", []), ensure_ascii=False),
                 intermediate_conclusions=json.dumps(data.get("intermediate_conclusions", []), ensure_ascii=False),
                 failure_records=json.dumps(data.get("failure_records", []), ensure_ascii=False),
+                decisions=json.dumps(data.get("decisions", []), ensure_ascii=False),
                 corrections=json.dumps(data.get("corrections", []), ensure_ascii=False),
                 confirmation_statuses=json.dumps(data.get("confirmation_statuses", []), ensure_ascii=False),
                 replacement_relationships=json.dumps(data.get("replacement_relationships", []), ensure_ascii=False),

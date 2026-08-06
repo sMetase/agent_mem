@@ -31,7 +31,7 @@ QDRANT_HOST = "localhost"
 QDRANT_GRPC_PORT = 6333
 COLLECTION_NAME = "agent_mem_generation"  # 独立 collection，不影响 mem0 的 openmemory
 VECTOR_DIM = 1024  # bge-m3 维度
-DEFAULT_SCORE_THRESHOLD = 0.70
+DEFAULT_SCORE_THRESHOLD = 0.30
 
 
 class QdrantClientSingleton:
@@ -101,6 +101,7 @@ class QdrantClientSingleton:
         user_id: str,
         top_k: int = 5,
         score_threshold: float = DEFAULT_SCORE_THRESHOLD,
+        payload_filters: dict | None = None,
     ) -> list[dict]:
         """
         按语义相似度检索最相近的记忆向量。
@@ -110,30 +111,40 @@ class QdrantClientSingleton:
             user_id: 限定用户范围
             top_k: 返回 Top-K 条
             score_threshold: 最低相似度阈值
+            payload_filters: 额外的 payload 过滤条件 {scene_id, task_id, session_id}
 
         Returns:
             [{"id": str, "score": float, "payload": dict}, ...]
         """
         try:
+            must_conditions = [
+                FieldCondition(
+                    key="user_id",
+                    match=MatchValue(value=user_id),
+                )
+            ]
+            if payload_filters:
+                for key, value in payload_filters.items():
+                    if value:
+                        must_conditions.append(
+                            FieldCondition(
+                                key=key,
+                                match=MatchValue(value=value),
+                            )
+                        )
+
             hits = self.client.query_points(
                 collection_name=self._collection_name,
                 query=query_vector,
-                query_filter=Filter(
-                    must=[
-                        FieldCondition(
-                            key="user_id",
-                            match=MatchValue(value=user_id),
-                        )
-                    ]
-                ),
+                query_filter=Filter(must=must_conditions),
                 limit=top_k,
                 score_threshold=score_threshold,
             )
 
             results = [
                 {
-                    "id": hit.id,
-                    "score": hit.score,
+                    "id": str(hit.id),
+                    "score": float(hit.score) if hit.score is not None else 0.0,
                     "payload": hit.payload or {},
                 }
                 for hit in hits.points
@@ -176,6 +187,15 @@ class QdrantClientSingleton:
         except Exception as e:
             logger.error(f"Qdrant upsert failed: {e}")
             raise VectorStoreError(f"Qdrant 写入失败: {str(e)}")
+
+    def upsert_single(
+        self,
+        point_id: str,
+        vector: list[float],
+        payload: dict,
+    ) -> None:
+        """写入/更新单条向量。"""
+        self.upsert_vectors([vector], [payload], [point_id])
 
     def delete_vectors(self, ids: list[str]) -> None:
         """删除指定 ID 的向量。"""

@@ -89,8 +89,6 @@ def judge_extraction_value(extraction_result: ExtractionResult) -> ValueJudgment
         active_types.append("key_fact")
     if extraction_result.task_state and not extraction_result.task_state.is_empty():
         active_types.append("task_state")
-    if extraction_result.decisions and not extraction_result.decisions.is_empty():
-        active_types.append("decision")
     if extraction_result.preferences and not extraction_result.preferences.is_empty():
         active_types.append("preference")
     if extraction_result.process and not extraction_result.process.is_empty():

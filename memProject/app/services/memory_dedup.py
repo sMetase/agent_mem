@@ -548,26 +548,44 @@ class DedupService:
         existing_memories: Optional[list[Memory]] = None,
     ) -> DedupAction:
         """
-        基于综合评分决定去重动作。
+        串行门控去重决策 — 对齐设计文档 5.2.3。
 
-        决策矩阵（v2 tuned）：
-          composite = 0.5 * vector_score + 0.3 * keyword_overlap + 0.2 * identity_bonus
+        第一步：相似度匹配（向量）
+          vector_score >= 0.85 → 进入下一步；否则 KEEP_NEW
 
-          composite >= 0.90 + identity     → DISCARD (近乎重复)
-          composite >= 0.78 + identity     → UPDATE_EXISTING (明确更新)
-          composite >= 0.80 + conflict     → CONFLICT (潜在冲突)
-          composite >= 0.50 + !identity    → MERGE (相似但不同主体)
-          composite < 0.50                 → KEEP_NEW
+        第二步：结构化匹配（关键词 + 记忆类型）
+          keyword_overlap >= 0.5 + memory_type 一致 → 进入候选集；否则 KEEP_NEW
 
-        新增 CONFLICT 路径：高相似度 + 存在冲突信号 → CONFLICT
+        第三步：标识校验（user_id / session_id / task_id / entities）
+          identity_match = True （同 user + (同 session 或 同 task 或 entities ≥ 2)）→ 进入融合；否则 KEEP_NEW
+
+        第四步：融合决策
+          vector >= 0.95 + keyword >= 0.70 + identity → 重复，不写入 (DISCARD)
+          vector >= 0.85 + keyword >= 0.50 + identity → 补充信息 (MERGE)
+          冲突检测通过 → 覆盖更新 (UPDATE_EXISTING)
+          冲突无法自动判断 → 标记冲突 (CONFLICT)
         """
-        identity_bonus = 1.0 if identity_match else 0.0
-        composite = (
-            self._vec_w * vector_score
-            + self._kw_w * keyword_overlap
-            + self._id_w * identity_bonus
-        )
+        # ===== 第一步：相似度匹配 =====
+        if vector_score < similarity_threshold:
+            return DedupAction.KEEP_NEW
 
+        # ===== 第二步：结构化匹配（关键词 + 类型） =====
+        if keyword_overlap < keyword_threshold:
+            return DedupAction.KEEP_NEW
+
+        if candidate and best_match and existing_memories:
+            existing = next(
+                (e for e in existing_memories if e.memory_id == best_match.memory_id),
+                None,
+            )
+            if existing and existing.memory_type != candidate.memory_type:
+                return DedupAction.KEEP_NEW
+
+        # ===== 第三步：标识校验 =====
+        if not identity_match:
+            return DedupAction.KEEP_NEW
+
+        # ===== 第四步：融合决策 =====
         # 冲突检测
         is_conflict = False
         conflict_reason = ""
@@ -581,25 +599,20 @@ class DedupService:
                     candidate, existing, best_match
                 )
 
-        logger.debug(
-            f"Dedup decision: vector={vector_score:.3f}, keyword={keyword_overlap:.3f}, "
-            f"identity={identity_match}, composite={composite:.3f}, conflict={is_conflict}"
-        )
-
-        # 冲突优先处理
-        if is_conflict and composite >= 0.80:
+        if is_conflict:
             logger.info(f"Conflict detected: {conflict_reason}")
             return DedupAction.CONFLICT
 
-        # 标准决策路径
-        if composite >= 0.90:
+        if vector_score >= 0.95 and keyword_overlap >= 0.70:
             return DedupAction.DISCARD
-        elif composite >= 0.78 and identity_match:
-            return DedupAction.UPDATE_EXISTING
-        elif composite >= 0.50:
+
+        if vector_score >= 0.85 and keyword_overlap >= 0.50:
             return DedupAction.MERGE
-        else:
-            return DedupAction.KEEP_NEW
+
+        if vector_score >= 0.78:
+            return DedupAction.UPDATE_EXISTING
+
+        return DedupAction.MERGE
 
     # ---------- 内容合并 ----------
 

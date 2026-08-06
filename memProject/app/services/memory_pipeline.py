@@ -30,7 +30,6 @@ from app.services.memory_extractor import ExtractionResult, MemoryExtractor
 from app.services.memory_generator import MemoryCandidate, MemoryGenerator
 from app.services.memory_quality import (
     QualityReport,
-    judge_extraction_value,
     verify_candidates_batch,
     QualityAuditor,
 )
@@ -217,7 +216,7 @@ class MemoryPipeline:
         try:
             extraction_result: ExtractionResult = await self._extractor.extract(
                 text=text,
-                types=extraction_types,
+                types=extraction_types if extraction_types else None,
                 task_context=task_context,
             )
         except Exception as e:
@@ -225,18 +224,6 @@ class MemoryPipeline:
 
         if extraction_result.is_empty():
             logger.info("Extraction produced no results, pipeline complete")
-            return result
-
-        # ========== Phase 1.5: Value Judgment ==========
-        value_judgment = judge_extraction_value(extraction_result)
-        logger.info(
-            f"Pipeline Phase 1.5/4: Value judgment — "
-            f"overall={value_judgment.overall_value:.2f}, "
-            f"keep={value_judgment.should_keep}, "
-            f"reason={value_judgment.reason}"
-        )
-        if not value_judgment.should_keep:
-            logger.info("Value judgment recommends discard, pipeline complete")
             return result
 
         # ========== Phase 2: Generate ==========
@@ -485,28 +472,33 @@ class MemoryPipeline:
                 })
                 await db.flush()
 
-                # mem0 写入 (embedding + Qdrant 一步完成)
+                # 向量化 + Qdrant 写入 + T_MEMORY_VECTOR 桥接
                 try:
-                    from app.services.mem0_client import mem0_client as _m0
-                    _m0.add(
-                        messages=[{"role": "user", "content": dr.content}],
-                        user_id=user_id,
-                        agent_id=agent_id,
-                        session_id=session_id,
-                        metadata={
-                            "memory_id": memory_id,
-                            "scene_id": scene_id,
-                            "task_id": task_id,
-                            "session_id": session_id,
-                            "memory_type": dr.memory_type,
-                            "status": status,
-                            "importance": dr.importance,
-                            "confidence": dr.confidence,
+                    vector = await self.embedding.embed_single(dr.content)
+                    point_id = _gen_id("pt")
+                    from app.core.qdrant_client import _str_to_uuid
+                    qdrant_id = _str_to_uuid(point_id)
+                    self.qdrant.upsert_single(
+                        point_id=point_id,
+                        vector=vector,
+                        payload={
+                            "user_id": user_id,
+                            "scene_id": scene_id or "",
+                            "task_id": task_id or "",
+                            "session_id": session_id or "",
                         },
-                        infer=False,
                     )
+                    if self.qdrant.is_available:
+                        from app.models.base import MemoryVector
+                        mv = MemoryVector(
+                            memory_id=memory_id,
+                            vector_store_id=qdrant_id,
+                            dimension=1024,
+                        )
+                        db.add(mv)
+                        memory.vector_id = qdrant_id
                 except Exception as e:
-                    logger.warning(f"mem0 write failed for {memory_id}: {e}")
+                    logger.warning(f"Qdrant write failed for {memory_id}: {e}")
 
             elif dr.action in (DedupAction.MERGE, DedupAction.UPDATE_EXISTING):
                 # 更新已有记忆
@@ -552,28 +544,46 @@ class MemoryPipeline:
                             confidence=0.85,
                         ))
 
-                        # mem0 更新向量
+                        # 更新 Qdrant 向量 + T_MEMORY_VECTOR 桥接
                         try:
-                            from app.services.mem0_client import mem0_client as _m0
-                            _m0.add(
-                                messages=[{"role": "user", "content": dr.content}],
-                                user_id=user_id,
-                                agent_id=agent_id,
-                                session_id=session_id,
-                                metadata={
-                                    "memory_id": memory_id,
-                                    "scene_id": scene_id,
-                                    "task_id": task_id,
-                                    "session_id": session_id,
-                                    "memory_type": dr.memory_type,
-                                    "status": existing.status if existing else "active",
-                                    "importance": dr.importance,
-                                    "confidence": dr.confidence,
-                                },
-                                infer=False,
-                            )
+                            vector = await self.embedding.embed_single(dr.content)
+                            from app.core.qdrant_client import _str_to_uuid
+                            existing_vector_id = existing.vector_id if hasattr(existing, "vector_id") and existing.vector_id else None
+                            if existing_vector_id:
+                                self.qdrant.upsert_single(
+                                    point_id=existing_vector_id,
+                                    vector=vector,
+                                    payload={
+                                        "user_id": user_id,
+                                        "scene_id": scene_id or "",
+                                        "task_id": task_id or "",
+                                        "session_id": session_id or "",
+                                    },
+                                )
+                            else:
+                                point_id = _gen_id("pt")
+                                qdrant_id = _str_to_uuid(point_id)
+                                self.qdrant.upsert_single(
+                                    point_id=point_id,
+                                    vector=vector,
+                                    payload={
+                                        "user_id": user_id,
+                                        "scene_id": scene_id or "",
+                                        "task_id": task_id or "",
+                                        "session_id": session_id or "",
+                                    },
+                                )
+                                if self.qdrant.is_available:
+                                    from app.models.base import MemoryVector
+                                    mv = MemoryVector(
+                                        memory_id=memory_id,
+                                        vector_store_id=qdrant_id,
+                                        dimension=1024,
+                                    )
+                                    db.add(mv)
+                                    existing.vector_id = qdrant_id
                         except Exception as e:
-                            logger.warning(f"mem0 update failed for {memory_id}: {e}")
+                            logger.warning(f"Qdrant update failed for {memory_id}: {e}")
                     else:
                         logger.warning(f"Memory {memory_id} not found for MERGE/UPDATE")
                 except Exception as e:

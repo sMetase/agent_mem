@@ -2,11 +2,8 @@
 """
 记忆核心 API — 对齐前端对接文档。
 
-所有端点使用 MemoryPipeline（生成+去重）和 MemoryStore（检索/列表/删除）。
-替换原来的 MCP 中转 + Mock 提取器方案。
-
 端点:
-  POST /write       — 同步写入记忆（支持 Mock / MQ_Wait / Direct Pipeline 三种模式）
+  POST /write       — 同步写入记忆
   POST /async_write — 异步写入（即刻返回 request_id）
   POST /search      — 语义检索记忆（Qdrant + PostgreSQL）
   POST /list        — 分页列出记忆
@@ -19,22 +16,16 @@
   - dialogue:     当前对话记录，messages 逐条落库
   - session:      历史会话数据，含会话时间/来源/摘要
   - task_process: 任务过程数据，含目标/进展/执行结果
-
-同步写入三种模式:
-  - Mock (use_mock_extraction=True):   中文正则提取，闪电返回，开发期使用
-  - MQ_Wait (use_mq_wait=True):       投递 Kafka → Redis 等待结果 → 返回（伪同步）
-  - Direct Pipeline (default):        直接调用 LLM Pipeline，5-15s 延迟
 """
 
 import asyncio
-import re as re_module
 import time as time_module
 from typing import Optional
 from uuid import uuid4
 
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, BackgroundTasks, Depends, Query, Request
+from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -135,7 +126,7 @@ async def _log_retrieval(
 
 
 # Mock 提取器（从共享模块导入，供 memory.py 和 mq_consumer.py 共用）
-from app.services.mock_extractor import mock_extract_results as _mock_extract_results
+
 
 
 # ============================================================
@@ -146,7 +137,6 @@ from app.services.mock_extractor import mock_extract_results as _mock_extract_re
 async def memory_write(
     request: Request,
     body: MemoryWriteRequest,
-    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
     agent_id: str = Depends(get_current_agent),
     user_id_header: str = Depends(get_current_user_id),
@@ -161,12 +151,7 @@ async def memory_write(
     - session (历史会话): 导入历史会话内容、时间、来源信息
     - task_process (任务过程): 写入任务目标、进展、执行结果
 
-    同步写入模式（由 settings.generation 控制）：
-    1. Mock 模式 (use_mock_extraction=True): 中文正则提取，<100ms 返回
-    2. MQ_Wait 模式 (use_mq_wait=True): 投递 Kafka → Redis 等待结果 → 伪同步返回
-    3. Direct Pipeline 模式: 直接调用 LLM Pipeline（5-15s）
-
-    延迟: Mock <100ms, MQ_Wait ~1-5s, Direct ~5-15s。
+    延迟: 5-15s（LLM抽取+生成+去重+存储）。
     """
     start = time_module.perf_counter()
     itype = body.interaction_type
@@ -206,72 +191,7 @@ async def memory_write(
     # 根据配置选择处理模式
     # ============================================================
 
-    # 模式 1: Mock 提取（开发期，秒级返回）
-    if settings.generation.use_mock_extraction:
-        raw_results = _mock_extract_results(body.messages)
-        results = [
-            WriteResultItem(
-                id=r["id"],
-                memory=r["memory"],
-                event=MemoryEvent(r["event"]),
-            )
-            for r in raw_results
-        ]
-        elapsed = round((time_module.perf_counter() - start) * 1000, 2)
-        logger.warning(
-            f"[Mock] 同步写入完成(正则提取, 非真实Pipeline): type={itype}, "
-            f"user_id={effective_user_id}, messages={len(body.messages)}, "
-            f"results={len([r for r in raw_results if r['event'] == 'ADD'])}, "
-            f"elapsed={elapsed}ms"
-        )
-        return ok(MemoryWriteResponse(results=results, mode="mock").model_dump())
-
-    # 模式 2: MQ 等待（正式期伪同步，方案二）
-    if settings.generation.use_mq_wait:
-        request_id = f"mq_{uuid4().hex[:24]}"
-        body_dict = body.model_dump()
-
-        # 投递到 MQ
-        mq_ok = await _try_deliver_to_mq(
-            request_id, effective_user_id, agent_id, body_dict
-        )
-
-        if mq_ok:
-            # 等待 Consumer 处理结果（超时返回 None，由此处降级并标记）
-            from app.services.result_waiter import wait_for_result_with_timeout
-            raw_results = await wait_for_result_with_timeout(request_id)
-
-            if raw_results is None:
-                # MQ 等待超时：结果不可知，明确标记降级而非伪装成 SKIP
-                elapsed = round((time_module.perf_counter() - start) * 1000, 2)
-                logger.warning(
-                    f"[MQ_Wait] 等待超时降级: request_id={request_id}, elapsed={elapsed}ms"
-                )
-                return ok(MemoryWriteResponse(
-                    results=[
-                        WriteResultItem(id="", memory="", event=MemoryEvent.SKIP)
-                    ],
-                    mode="mq_timeout",
-                ).model_dump())
-
-            results = [
-                WriteResultItem(
-                    id=r.get("id", ""),
-                    memory=r.get("memory", ""),
-                    event=MemoryEvent(r.get("event", "SKIP")),
-                )
-                for r in raw_results
-            ]
-            elapsed = round((time_module.perf_counter() - start) * 1000, 2)
-            logger.info(
-                f"[MQ_Wait] 同步写入完成: request_id={request_id}, "
-                f"elapsed={elapsed}ms"
-            )
-            return ok(MemoryWriteResponse(results=results, mode="mq").model_dump())
-        else:
-            logger.warning("MQ 不可用，降级到 Direct Pipeline")
-
-    # 模式 3: Direct Pipeline（默认，直接调用 LLM）
+    # Direct Pipeline
     conversation_text = body.get_content_text()
 
     try:
@@ -283,7 +203,7 @@ async def memory_write(
             session_id=effective_session_id,
             task_id=body.task_id,
             source_record_ids=None,
-            extraction_types=["key_fact", "task_state", "decision"],
+            extraction_types=["key_fact", "task_state", "preference", "process", "feedback"],
             task_context=body.metadata,
             db=db,
         )
@@ -648,70 +568,112 @@ async def memory_search(
         filters["created_at"] = time_filter
 
     try:
-        # ── 主路径: mem0 三路混合检索 + Qdrant 层过滤 ──
-        from app.services.mem0_client import mem0_client as _m0
+        # ── 主路径: Qdrant 向量检索 → T_MEMORY_VECTOR 桥接 → T_MEMORY ──
+        from app.core.qdrant_client import qdrant_client as _qd
+        from app.services.embedding_client import embedding_client as _emb
+        from app.models.base import MemoryVector, Memory
         import math as _math
 
-        raw = _m0.search(
-            query=body.query,
+        # Step 1: 向量化 query
+        query_vector = await _emb.embed_single(body.query)
+
+        # Step 2: Qdrant 向量检索 + payload 预过滤
+        payload_filters = {}
+        if body.scene_id:
+            payload_filters["scene_id"] = body.scene_id
+        if body.task_id:
+            payload_filters["task_id"] = body.task_id
+        if body.session_id:
+            payload_filters["session_id"] = body.session_id
+
+        hits = _qd.search_similar(
+            query_vector=query_vector,
             user_id=body.user_id,
-            limit=body.top_k,
-            filters=filters if filters else None,
-            rerank=body.rerank,
+            top_k=max(body.top_k * 3, 30),
+            payload_filters=payload_filters if payload_filters else None,
         )
 
+        if not hits:
+            return ok({"query": body.query, "results": [], "total_candidates": 0, "elapsed_ms": 0})
+
+        # Step 3: T_MEMORY_VECTOR 桥接 → memory_id + score
+        from sqlalchemy import select as _sel
+        # 构建 Qdrant point_id → score 映射（normalize UUID 格式）
+        point_scores = {str(h["id"]): float(h["score"]) if h["score"] is not None else 0.0 for h in hits}
+        mv_result = await db.execute(
+            _sel(MemoryVector).where(MemoryVector.vector_store_id.in_(list(point_scores.keys())))
+        )
+        id_map = {}      # memory_id → qdrant_score
+        for mv in mv_result.scalars().all():
+            id_map[mv.memory_id] = point_scores.get(mv.vector_store_id, 0.0)
+
+        if not id_map:
+            return ok({"query": body.query, "results": [], "total_candidates": len(hits), "elapsed_ms": 0})
+
+        # Step 4: T_MEMORY 取权威数据 + 后过滤
+        mem_query = _sel(Memory).where(Memory.memory_id.in_(list(id_map.keys())))
+        if body.memory_types:
+            mem_query = mem_query.where(Memory.memory_type.in_(body.memory_types))
+        if body.status:
+            mem_query = mem_query.where(Memory.status.in_(body.status))
+        else:
+            mem_query = mem_query.where(Memory.status == "active")
+
+        mem_result = await db.execute(mem_query)
+        db_memories = {m.memory_id: m for m in mem_result.scalars().all()}
+
         now_dt = datetime.now(timezone.utc)
-        HALF_LIFE_DAYS = 30        # 30天后新近性权重减半
-        RECENCY_WEIGHT = 0.15      # 综合分中新近性占比
+        HALF_LIFE_DAYS = 30
 
         results = []
-        for item in raw.get("results", []):
-            meta = item.get("metadata", {})
-            content = item.get("memory", "")
+        for memory_id, mem_score in id_map.items():
+            mem = db_memories.get(memory_id)
+            if not mem:
+                continue
+
+            content = mem.content or ""
             if body.max_content_length and len(content) > body.max_content_length:
                 content = content[:body.max_content_length]
 
-            mem_score = item.get("score", 0)
-
-            # 时间新近性: recency = 0.5 ^ (age_days / 30)
+            # 时间新近性
             recency = 0.5
-            created_str = item.get("created_at", "")
-            if created_str:
+            if mem.created_at:
                 try:
-                    created_dt = datetime.fromisoformat(created_str.replace("Z", "+00:00"))
-                    if created_dt.tzinfo is not None:
-                        created_dt = created_dt.replace(tzinfo=None)
+                    created_dt = mem.created_at.replace(tzinfo=None) if mem.created_at.tzinfo else mem.created_at
                     age_seconds = max(0, (now_dt.replace(tzinfo=None) - created_dt).total_seconds())
                     age_days = age_seconds / 86400
                     recency = _math.pow(0.5, age_days / HALF_LIFE_DAYS)
                 except Exception:
                     pass
 
-            # 融合: final = mem0分 × (1-w) + 新近性 × w
-            final_score = round(mem_score * (1 - RECENCY_WEIGHT) + recency * RECENCY_WEIGHT, 4)
+            final_score = round(
+                (mem_score or 0) * 0.6
+                + recency * 0.15
+                + (mem.importance or 0.5) * 0.15
+                + (mem.confidence or 0.5) * 0.1, 4
+            )
 
             results.append({
-                "id": item.get("id", ""),
+                "memory_id": mem.memory_id,
                 "content": content,
-                "summary": meta.get("summary", content[:200]),
-                "memory_type": meta.get("memory_type", ""),
-                "scene_id": meta.get("scene_id", ""),
-                "task_id": meta.get("task_id", ""),
-                "session_id": meta.get("session_id", ""),
-                "status": meta.get("status", "active"),
-                "importance": meta.get("importance", 0.5),
-                "confidence": meta.get("confidence", 0.5),
+                "summary": mem.summary or content[:200],
+                "memory_type": mem.memory_type or "",
+                "scene_id": mem.scene_id or "",
+                "task_id": mem.task_id or "",
+                "session_id": mem.session_id or "",
+                "status": mem.status or "active",
+                "importance": mem.importance or 0.5,
+                "confidence": mem.confidence or 0.5,
                 "relevance_score": final_score,
-                "created_at": item.get("created_at", ""),
-                "updated_at": item.get("updated_at", ""),
+                "created_at": mem.created_at.isoformat() if mem.created_at else "",
+                "updated_at": mem.updated_at.isoformat() if mem.updated_at else "",
             })
 
-        # 按融合分重排
         results.sort(key=lambda x: x["relevance_score"], reverse=True)
         results = results[:body.top_k]
 
         elapsed_ms = round((time_module.perf_counter() - t0) * 1000)
-        total_candidates = len(raw.get("results", []))
+        total_candidates = len(hits)
         result = {
             "query": body.query,
             "results": results,

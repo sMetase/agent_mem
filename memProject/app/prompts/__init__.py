@@ -1,35 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Prompt 模板 — 关键记忆抽取、任务状态、历史决策、偏好、过程、反馈修正、记忆生成。"""
+"""Prompt 模板 — 统一记忆抽取、记忆生成。"""
 
-from app.prompts.key_fact_extraction import (
-    KEY_FACT_SYSTEM_PROMPT,
-    KEY_FACT_USER_TEMPLATE,
-    KEY_FACT_OUTPUT_SCHEMA,
-)
-from app.prompts.task_state_extraction import (
-    TASK_STATE_SYSTEM_PROMPT,
-    TASK_STATE_USER_TEMPLATE,
-    TASK_STATE_OUTPUT_SCHEMA,
-)
-from app.prompts.decision_extraction import (
-    DECISION_SYSTEM_PROMPT,
-    DECISION_USER_TEMPLATE,
-    DECISION_OUTPUT_SCHEMA,
-)
-from app.prompts.preference_extraction import (
-    PREFERENCE_SYSTEM_PROMPT,
-    PREFERENCE_USER_TEMPLATE,
-    PREFERENCE_OUTPUT_SCHEMA,
-)
-from app.prompts.process_extraction import (
-    PROCESS_SYSTEM_PROMPT,
-    PROCESS_USER_TEMPLATE,
-    PROCESS_OUTPUT_SCHEMA,
-)
-from app.prompts.feedback_extraction import (
-    FEEDBACK_SYSTEM_PROMPT,
-    FEEDBACK_USER_TEMPLATE,
-    FEEDBACK_OUTPUT_SCHEMA,
+from app.prompts.extraction import (
+    EXTRACTION_SYSTEM_PROMPT,
+    EXTRACTION_USER_TEMPLATE,
+    EXTRACTION_OUTPUT_SCHEMA,
 )
 from app.prompts.memory_generation import (
     MEMORY_GENERATION_SYSTEM_PROMPT,
@@ -38,24 +13,9 @@ from app.prompts.memory_generation import (
 )
 
 __all__ = [
-    "KEY_FACT_SYSTEM_PROMPT",
-    "KEY_FACT_USER_TEMPLATE",
-    "KEY_FACT_OUTPUT_SCHEMA",
-    "TASK_STATE_SYSTEM_PROMPT",
-    "TASK_STATE_USER_TEMPLATE",
-    "TASK_STATE_OUTPUT_SCHEMA",
-    "DECISION_SYSTEM_PROMPT",
-    "DECISION_USER_TEMPLATE",
-    "DECISION_OUTPUT_SCHEMA",
-    "PREFERENCE_SYSTEM_PROMPT",
-    "PREFERENCE_USER_TEMPLATE",
-    "PREFERENCE_OUTPUT_SCHEMA",
-    "PROCESS_SYSTEM_PROMPT",
-    "PROCESS_USER_TEMPLATE",
-    "PROCESS_OUTPUT_SCHEMA",
-    "FEEDBACK_SYSTEM_PROMPT",
-    "FEEDBACK_USER_TEMPLATE",
-    "FEEDBACK_OUTPUT_SCHEMA",
+    "EXTRACTION_SYSTEM_PROMPT",
+    "EXTRACTION_USER_TEMPLATE",
+    "EXTRACTION_OUTPUT_SCHEMA",
     "MEMORY_GENERATION_SYSTEM_PROMPT",
     "MEMORY_GENERATION_USER_TEMPLATE",
     "MEMORY_GENERATION_OUTPUT_SCHEMA",
