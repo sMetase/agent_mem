@@ -3,47 +3,47 @@
 统一记忆抽取 Prompt — 单次 LLM 调用同时抽取五类信息，每条碎片独立评分。
 """
 
-EXTRACTION_SYSTEM_PROMPT = """You are a precise memory extraction system. Analyze the conversation text and extract valuable information across five categories. For each extracted item, assign a value score (0.0-1.0) based on how important it is for future conversations.
+EXTRACTION_SYSTEM_PROMPT = """你是一个精确的记忆抽取系统。分析对话文本，从五个类别中抽取有价值的信息。对每个抽取的条目，根据它对未来对话的重要性，赋予一个价值分数（0.0-1.0）。
 
-Value score guidelines:
-- 0.8-1.0: Critical for future decisions (deadlines, confirmed plans, constraints)
-- 0.5-0.7: Clearly useful (tech stacks, preferences, task progress)
-- 0.3-0.5: Potentially useful (names, background context, process details)
-- 0.1-0.2: Marginally useful (greetings, filler, repeated confirmations)
+价值分数准则：
+- 0.8-1.0: 对未来决策至关重要（截止时间、确认的计划、约束）
+- 0.5-0.7: 明显有用（技术栈、偏好、任务进展）
+- 0.3-0.5: 可能有价值（名称、背景上下文、过程细节）
+- 0.1-0.2: 边缘价值（问候、闲聊、重复确认）
 
-Categories to extract:
+要抽取的类别：
 
-1. KEY FACTS:
-   - business_objects: Named entities (people, systems, projects, data). Each: name, type, description, value.
-   - constraints: Rules, deadlines, limitations. Each: type(technical/business/temporal/budget), description, scope, severity(high/medium/low), value.
-   - confirmations: Items explicitly agreed upon. Each: item, parties(list), context, value.
+1. 关键事实：
+   - business_objects: 命名实体（人物、系统、项目、数据）。每条：name, type, description, value。
+   - constraints: 规则、截止时间、限制。每条：type(technical/business/temporal/budget), description, scope, severity(high/medium/low), value。
+   - confirmations: 明确同意的事项。每条：item, parties(list), context, value。
 
-2. TASK STATE:
-   - current_progress: Where the task stands (string). Include a value.
-   - completed_items: Finished deliverables. Each: item, evidence, completion_note, value.
-   - pending_items: Work still to be done. Each: item, priority(high/medium/low), dependencies, value.
+2. 任务状态：
+   - current_progress: 任务当前进展（字符串）。包含 value。
+   - completed_items: 已完成的交付物。每条：item, evidence, completion_note, value。
+   - pending_items: 尚待完成的工作。每条：item, priority(high/medium/low), dependencies, value。
 
-3. USER PREFERENCES:
-   - style_preferences: Communication style, tone, output format. Each: preference_object, preference_content, applicable_scenario, value.
-   - habitual_preferences: Workflow, tool, process habits. Each: preference_object, preference_content, applicable_scenario, value.
-   - decision_tendencies: Risk attitude, trade-off patterns. Each: tendency_type(risk_attitude/priority_criteria/trade_off/evaluation), tendency_content, evidence, value.
+3. 用户偏好：
+   - style_preferences: 沟通风格、语气、输出格式。每条：preference_object, preference_content, applicable_scenario, value。
+   - habitual_preferences: 工作流、工具、流程习惯。每条：preference_object, preference_content, applicable_scenario, value。
+   - decision_tendencies: 风险态度、权衡模式。每条：tendency_type(risk_attitude/priority_criteria/trade_off/evaluation), tendency_content, evidence, value。
 
-4. PROCESS INFORMATION (including decisions):
-   - execution_actions: Agent actions (search, analyze, compute, tool_call, generate, query). Each: action_name, action_type, input_summary, output_summary, tool_name, value.
-   - intermediate_conclusions: Interim findings. Each: conclusion, basis, confidence(0-1), is_final(bool), value.
-   - failure_records: Errors and recoveries. Each: failure_point, failure_reason, attempted_recovery, was_resolved(bool), lesson_learned, value.
-   - decisions: Approaches, strategies chosen. Each: type(plan/rationale/result), content, context, outcome(success/partial/failure/unknown), alternatives(list), value.
+4. 过程信息（含决策）：
+   - execution_actions: 智能体动作（搜索、分析、计算、工具调用、生成、查询）。每条：action_name, action_type, input_summary, output_summary, tool_name, value。
+   - intermediate_conclusions: 阶段性发现。每条：conclusion, basis, confidence(0-1), is_final(bool), value。
+   - failure_records: 错误和恢复。每条：failure_point, failure_reason, attempted_recovery, was_resolved(bool), lesson_learned, value。
+   - decisions: 选择的方法、策略。每条：type(plan/rationale/result), content, context, outcome(success/partial/failure/unknown), alternatives(list), value。
 
-5. FEEDBACK & CORRECTIONS:
-   - corrections: User corrections of previous output. Each: corrected_content, correction_instruction, original_context, correction_type(negation/revision/supplement), value.
-   - confirmation_statuses: User confirms/approves/rejects. Each: confirmed_item, status(confirmed/rejected/partial/modified), parties_involved(list), context, value.
-   - replacement_relationships: New statement replaces old. Each: replaced_content, replacement_content, replacement_reason, scope(global/task_local/session_local), supersedes_memory_id, value.
+5. 反馈与纠正：
+   - corrections: 用户对之前输出的纠正。每条：corrected_content, correction_instruction, original_context, correction_type(negation/revision/supplement), value。
+   - confirmation_statuses: 用户确认/批准/拒绝。每条：confirmed_item, status(confirmed/rejected/partial/modified), parties_involved(list), context, value。
+   - replacement_relationships: 新陈述替换旧陈述。每条：replaced_content, replacement_content, replacement_reason, scope(global/task_local/session_local), supersedes_memory_id, value。
 
-Output ONLY valid JSON. Empty categories use empty arrays or empty strings.
-For items with value < 0.3, still include them in the output — filtering will be done downstream.
+只输出合法的 JSON。空类别使用空数组或空字符串。
+对 value < 0.3 的条目，仍然包含在输出中——过滤会在下游完成。
 """
 
-EXTRACTION_USER_TEMPLATE = """Extract valuable information from the following conversation text. For each item, assign a value score (0.0-1.0):
+EXTRACTION_USER_TEMPLATE = """从以下对话文本中抽取有价值的信息。对每个条目，赋予一个价值分数（0.0-1.0）：
 
 {text}"""
 
