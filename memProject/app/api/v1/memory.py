@@ -26,6 +26,7 @@ from uuid import uuid4
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, Query, Request
+from pydantic import BaseModel, Field
 from sqlalchemy import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -160,7 +161,7 @@ async def memory_write(
     # 合并 ID 来源（Header > Body，开发模式自动补默认值）
     effective_user_id = normalize_id(user_id_header or body.user_id)
     effective_scene_id = scene_id or body.scene_id or DEFAULT_DEV_SCENE_ID
-    effective_session_id = session_id_header or body.session_id or f"sess_{uuid4().hex[:12]}"
+    effective_session_id = session_id_header or body.session_id
     effective_task_id = task_id_header or body.task_id
 
     # 业务级校验（ID 格式 + 类型感知校验）
@@ -347,7 +348,6 @@ def _pipeline_to_write_results(pipeline_result) -> list[WriteResultItem]:
       merge           → MERGE    (合并到已有)
       update_existing → UPDATE   (更新已有记忆)
       discard         → SKIP     (重复或不包含新信息)
-      conflict        → CONFLICT (冲突需人工确认)
     """
     results = []
     for d in pipeline_result.details:
@@ -366,13 +366,6 @@ def _pipeline_to_write_results(pipeline_result) -> list[WriteResultItem]:
                 id=memory_id,
                 memory=content,
                 event=MemoryEvent.MERGE,
-            ))
-        elif action == "conflict":
-            # 冲突：返回给前端标记为冲突，等待人工处理
-            results.append(WriteResultItem(
-                id=memory_id,
-                memory=f"[冲突] {content}",
-                event=MemoryEvent.ADD,  # 仍写入但标记为 pending
             ))
         elif action == "update_existing":
             results.append(WriteResultItem(
@@ -466,7 +459,7 @@ async def _fallback_sync_write(
         "user_id": user_id,
         "agent_id": agent_id,
         "scene_id": body.scene_id,
-        "session_id": body.session_id or f"sess_{uuid4().hex[:12]}",
+        "session_id": body.session_id,
         "task_id": body.task_id,
         "interaction_type": itype,
         "content_type": "text",
@@ -925,6 +918,9 @@ async def memory_context(
             data={"formatted_text": "", "memory_count": 0, "estimated_tokens": 0},
             error_code="CONTEXT_FAILED",
         )
+
+
+@router.put("/update", summary="更新单条记忆")
 async def memory_update(
     body: MemoryUpdateRequest,
     db: AsyncSession = Depends(get_db),
@@ -1149,3 +1145,84 @@ async def memory_stats(
             },
             error_code="STATS_FAILED",
         )
+# -*- coding: utf-8 -*-
+"""User profile endpoint — appended to memory.py"""
+
+
+class ProfileRequest(BaseModel):
+    user_id: str = Field(..., description="用户标识")
+    max_memories: int = Field(default=50, description="最多加载的偏好+事实记忆数")
+
+
+@router.post("/profile", summary="用户画像报告")
+async def memory_profile(
+    body: ProfileRequest,
+    db: AsyncSession = Depends(get_db),
+    agent_id: str = Depends(get_current_agent),
+):
+    """聚合用户全部 preference + fact 记忆，LLM 生成结构化画像 + 文本总结。"""
+    try:
+        from sqlalchemy import select as _sel
+        from app.models.base import Memory
+        from app.services.llm_client import llm_client as _llm
+        import json as _json
+
+        mem_result = await db.execute(
+            _sel(Memory).where(
+                Memory.user_id == body.user_id,
+                Memory.memory_type.in_(["preference", "fact"]),
+                Memory.status == "active",
+            ).order_by(Memory.importance.desc()).limit(body.max_memories)
+        )
+        memories = list(mem_result.scalars().all())
+
+        if not memories:
+            return ok({
+                "profile": {},
+                "summary": "",
+                "memory_count": 0,
+            })
+
+        pref_lines = "\n".join(
+            f"- {m.content}" for m in memories if m.memory_type == "preference"
+        )
+        fact_lines = "\n".join(
+            f"- {m.content}" for m in memories if m.memory_type == "fact"
+        )
+
+        prompt = (
+            "根据以下用户偏好和事实记忆生成用户画像。返回JSON，包含以下字段："
+            "preferences(偏好列表), business_focus(业务关注方向), "
+            "communication_style(沟通风格), decision_habits(决策习惯), "
+            "project_background(项目背景), personalization(个性化要求), "
+            "summary(200字内的文本总结)。"
+            f"\n\n## 用户偏好\n{pref_lines}\n\n## 关键事实\n{fact_lines}"
+        )
+
+        report = await _llm.chat_completion([{
+            "role": "user",
+            "content": prompt,
+        }], max_tokens=800)
+
+        try:
+            profile_data = _json.loads(report)
+        except Exception:
+            profile_data = {"summary": report}
+
+        summary_text = profile_data.pop("summary", report) if isinstance(profile_data, dict) else report
+        profile = {k: v for k, v in profile_data.items()} if isinstance(profile_data, dict) else {}
+
+        return ok({
+            "profile": profile,
+            "summary": summary_text,
+            "memory_count": len(memories),
+        })
+    except Exception as e:
+        logger.error(f"Profile generation failed: {e}")
+        return error(
+            message="画像生成失败",
+            code=-2,
+            data={"profile": {}, "summary": "", "memory_count": 0},
+            error_code="PROFILE_FAILED",
+        )
+

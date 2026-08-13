@@ -45,6 +45,14 @@ async def agent_register(body: AgentRegisterRequest, db: AsyncSession = Depends(
     api_key = generate_api_key()
     api_key_hash = hash_api_key(api_key)
 
+    # 校验 scene_id 是否存在
+    from app.models.base import Scene
+    scene_result = await db.execute(
+        select(Scene).where(Scene.scene_id == body.scene_id, Scene.is_active == True)
+    )
+    if not scene_result.scalar_one_or_none():
+        raise NotFoundError(f"场景不存在或已停用: {body.scene_id}")
+
     # 检查 agent_id 冲突（几乎不可能，但做防御）
     existing = await db.execute(
         select(Agent).where(Agent.agent_id == agent_id)

@@ -51,10 +51,10 @@ async def get_current_agent(
     # 开发阶段：跳过鉴权（对齐核心改动文档 四.2 节）
     # ================================================================
     if not settings.auth.enabled:
-        # 尝试从 Header 获取，没有则使用默认测试 Agent
+        # 尝试从 Header 获取 X-Agent-Id，没有则使用默认测试 Agent
+        # 注意：不能用 X-API-Key 兜底——它是 api_key 值，不是 agent_id
         dev_agent = (
             request.headers.get("X-Agent-Id")
-            or request.headers.get("X-API-Key")  # 即使不校验，也尝试提取
             or DEFAULT_DEV_AGENT_ID
         )
         dev_scene = request.headers.get("X-Scene-Id") or None  # 无Header时让Body生效

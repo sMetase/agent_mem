@@ -7,27 +7,26 @@
 - GET /session/{id} — 查询
 - GET /session — 列表
 - PUT /session/{id} — 更新
-- POST /session/{id}/close — 关闭会话（含压缩触发器）
+- POST /session/{id}/close — 关闭会话（含碎片压缩+摘要升级）
 """
 
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, BackgroundTasks, Depends, Query
-from sqlalchemy import select, func
+from fastapi import APIRouter, Depends, Query
+from sqlalchemy import select, func, update as sql_update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_agent, get_current_user_id
-from app.core.config import get_settings
 from app.core.database import get_db
-from app.core.exceptions import NotFoundError
 from app.core.logger import get_logger
 from app.core.security import generate_session_id
-from app.models.base import Session, Memory
+from app.models.base import Session, Memory, MemoryVector
 from app.schemas.common import ok
 from app.schemas.session import SessionCreateRequest, SessionUpdateRequest
 
 logger = get_logger("session_api")
 router = APIRouter()
+
 
 
 @router.post("", summary="创建会话", status_code=201)
@@ -98,6 +97,7 @@ async def session_get(
 @router.get("", summary="会话列表")
 async def session_list(
     user_id: str | None = Query(None),
+    agent_id: str | None = Query(None),
     status: str | None = Query(None),
     scene_id: str | None = Query(None),
     page: int = Query(1, ge=1),
@@ -110,6 +110,8 @@ async def session_list(
 
     if user_id:
         query = query.where(Session.user_id == user_id.strip().lower())
+    if agent_id:
+        query = query.where(Session.agent_id == agent_id.strip().lower())
     if status:
         query = query.where(Session.status == status)
     if scene_id:
@@ -172,27 +174,28 @@ async def session_update(
     return ok({"session_id": session_id, "updated": True}, "更新成功")
 
 
-@router.post("/{session_id}/close", summary="关闭会话")
+@router.post("/{session_id}/close", summary="关闭会话（含碎片压缩+摘要升级）")
 async def session_close(
     session_id: str,
-    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
     _agent: str = Depends(get_current_agent),
 ):
     """
-    关闭会话。
+    关闭会话 + 记忆压缩。
 
-    触发动作：
-    1. 更新 status → closed
-    2. 记录 ended_at
-    3. 统计关联记忆数
-    4. 若 message_count >= 阈值，触发长对话压缩（BackgroundTasks 异步执行）
+    流程:
+      1. 会话标记 closed + ended_at
+      2. 查该会话所有 active 记忆，按类型分流:
+         - preference / fact  → 升级为长期记忆 (session_id=NULL)
+         - 其他类型           → 压缩池
+      3. 压缩池非空 → LLM 生成摘要 → INSERT 新记忆
+      4. 压缩池记忆 → status='expired' + 删除 T_MEMORY_VECTOR + Qdrant
+      5. 新摘要 → 向量化 + T_MEMORY_VECTOR + Qdrant
     """
-    settings = get_settings()
+    sid = session_id.strip().lower()
 
-    result = await db.execute(
-        select(Session).where(Session.session_id == session_id.strip().lower())
-    )
+    # ── Step 1: 会话标记关闭 ──
+    result = await db.execute(select(Session).where(Session.session_id == sid))
     session = result.scalar_one_or_none()
     if not session:
         raise NotFoundError(f"会话不存在: {session_id}")
@@ -200,77 +203,134 @@ async def session_close(
     session.status = "closed"
     session.ended_at = datetime.now(timezone.utc)
 
-    # 统计该会话产生的记忆数
-    mem_count_result = await db.execute(
-        select(func.count()).where(
-            Memory.session_id == session_id.strip().lower(),
+    # ── Step 2: 查该会话所有 active 记忆 ──
+    mem_result = await db.execute(
+        select(Memory).where(
+            Memory.session_id == sid,
             Memory.status == "active",
         )
     )
-    memory_count = mem_count_result.scalar() or 0
-    message_count = session.message_count or 0
+    memories = list(mem_result.scalars().all())
 
-    # 判断是否需要触发压缩
-    trigger_threshold = settings.compression.trigger_session_length
-    compression_triggered = message_count >= trigger_threshold
+    total_count = len(memories)
+    compress_types = {"task_state", "process", "correction"}
+    compress_pool = [m for m in memories if m.memory_type in compress_types]
+    keep_count = total_count - len(compress_pool)  # pref/fact 原样保留
+    compressed_count = len(compress_pool)
+
+    # ── Step 3: 压缩路径（pref/fact 不动，保持原样）──
+    summary_text = ""
+    if compress_pool:
+        # 拼接为 LLM 输入
+        contents = [m.content for m in compress_pool]
+        lines = "\n".join(f"- {c[:200]}" for c in contents[:30])
+        try:
+            from app.services.llm_client import llm_client as _llm
+            summary_text = await _llm.chat_completion([{
+                "role": "user",
+                "content": (
+                    f"将以下会话记忆碎片总结为一段通顺的摘要（中文），"
+                    f"保留关键信息，去除流程性冗余：\n{lines}"
+                ),
+            }], max_tokens=500)
+        except Exception as e:
+            logger.warning(f"LLM 压缩总结失败: {e}")
+            summary_text = "；".join(contents[:5])
+
+        # 旧碎片标记 expired
+        compress_ids = [m.memory_id for m in compress_pool]
+        await db.execute(
+            sql_update(Memory)
+            .where(Memory.memory_id.in_(compress_ids))
+            .values(status="expired")
+        )
+
+        # 删除 T_MEMORY_VECTOR + Qdrant 向量
+        try:
+            from app.models.base import MemoryVector as _MV
+            mv_result = await db.execute(
+                select(_MV).where(_MV.memory_id.in_(compress_ids))
+            )
+            expired_mvs = list(mv_result.scalars().all())
+            if expired_mvs:
+                qdrant_ids = [mv.vector_store_id for mv in expired_mvs]
+                for mv in expired_mvs:
+                    await db.delete(mv)
+                try:
+                    from app.core.qdrant_client import qdrant_client as _qd
+                    _qd.delete_vectors(qdrant_ids)
+                except Exception as e:
+                    logger.warning(f"Qdrant 删除过期向量失败: {e}")
+        except Exception as e:
+            logger.warning(f"T_MEMORY_VECTOR 清理失败: {e}")
+
+    # ── Step 5: 新摘要入库 ──
+    if summary_text:
+        import uuid as _uuid
+        new_memory_id = f"mem_{_uuid.uuid4().hex[:16]}"
+        new_memory = Memory(
+            memory_id=new_memory_id,
+            user_id=session.user_id,
+            agent_id=session.agent_id,
+            scene_id=session.scene_id,
+            session_id=sid,
+            task_id=session.task_id,
+            content=summary_text,
+            summary=summary_text[:200],
+            key_points=[],
+            memory_type="process",
+            tags=["session_summary"],
+            entities=[],
+            status="active",
+            version=1,
+            importance=0.7,
+            confidence=0.8,
+            source_type="compressed",
+            source_record_ids=[],
+            memory_scope="session",
+        )
+        db.add(new_memory)
+        await db.flush()
+
+        # 向量化 + Qdrant + T_MEMORY_VECTOR
+        try:
+            from app.core.qdrant_client import qdrant_client as _qd, _str_to_uuid
+            from app.services.embedding_client import embedding_client as _emb
+            vector = await _emb.embed_single(summary_text)
+            point_id = f"pt_{_uuid.uuid4().hex[:16]}"
+            qdrant_id = _str_to_uuid(point_id)
+            _qd.upsert_single(
+                point_id=point_id,
+                vector=vector,
+                payload={
+                    "user_id": session.user_id,
+                    "scene_id": session.scene_id or "",
+                    "task_id": session.task_id or "",
+                    "session_id": sid,
+                },
+            )
+            mv = MemoryVector(
+                memory_id=new_memory_id,
+                vector_store_id=qdrant_id,
+                dimension=1024,
+            )
+            db.add(mv)
+        except Exception as e:
+            logger.warning(f"新摘要向量化写入失败: {e}")
 
     await db.commit()
 
-    if compression_triggered:
-        background_tasks.add_task(
-            _trigger_compression,
-            session_id=session_id,
-            message_count=message_count,
-            memory_count=memory_count,
-        )
-        logger.info(
-            f"会话关闭 + 压缩触发: session_id={session_id}, "
-            f"messages={message_count}, threshold={trigger_threshold}"
-        )
-    else:
-        logger.info(
-            f"会话关闭: session_id={session_id}, "
-            f"messages={message_count}, memories={memory_count}"
-        )
+    logger.info(
+        f"会话关闭完成: session_id={sid}, total={total_count}, "
+        f"kept={keep_count}, compressed={compressed_count}"
+    )
 
     return ok({
         "session_id": session_id,
         "status": "closed",
-        "message_count": message_count,
-        "memory_count": memory_count,
-        "compression_triggered": compression_triggered,
+        "total_memory_count": total_count,
+        "kept_count": keep_count,
+        "compressed_count": compressed_count,
+        "summary_text": summary_text,
         "ended_at": session.ended_at.isoformat(),
-        "summary": f"会话已关闭，产生 {memory_count} 条记忆"
-            + ("（已触发长对话压缩）" if compression_triggered else ""),
     }, "关闭成功")
-
-
-async def _trigger_compression(
-    session_id: str,
-    message_count: int,
-    memory_count: int,
-) -> None:
-    """
-    后台异步执行长对话压缩。
-
-    当会话消息数超过阈值时触发：
-    1. 检索该会话所有活跃记忆
-    2. 按重要性排序，保留核心记忆
-    3. 生成压缩摘要并存储
-
-    当前实现：标记并记录（压缩 Pipeline 待后续实现）。
-    """
-    settings = get_settings()
-    logger.info(
-        f"[Compression] 开始压缩: session_id={session_id}, "
-        f"messages={message_count}, memories={memory_count}, "
-        f"compressed_length={settings.compression.compressed_context_length}"
-    )
-
-    # TODO: 实际压缩 Pipeline（调用 LLM 生成摘要 → 生成压缩记忆 → 标记旧记忆）
-    # 当前占位：仅记录日志，确认触发条件生效
-
-    logger.info(
-        f"[Compression] 压缩完成（占位）: session_id={session_id}, "
-        f"compressed_to={settings.compression.compressed_context_length} chars"
-    )

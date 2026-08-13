@@ -45,23 +45,6 @@ def _gen_id(prefix: str = "mem") -> str:
     return f"{prefix}_{uuid.uuid4().hex[:16]}"
 
 
-def _create_relation(
-    source_id: str,
-    target_id: str,
-    relation_type: str,
-    description: str = "",
-    confidence: float = 0.8,
-) -> MemoryRelation:
-    """创建记忆关系边。"""
-    return MemoryRelation(
-        source_memory_id=source_id,
-        target_memory_id=target_id,
-        relation_type=relation_type,
-        description=description,
-        confidence=confidence,
-    )
-
-
 # ============================================================
 # 流水线结果
 # ============================================================
@@ -364,15 +347,10 @@ class MemoryPipeline:
                     result.memory_ids.append(dr.memory_id)
             elif dr.action == DedupAction.DISCARD:
                 result.discarded_count += 1
-            elif dr.action == DedupAction.CONFLICT:
-                result.conflict_count += 1
-                if dr.memory_id:
-                    result.memory_ids.append(dr.memory_id)
 
         logger.info(
             f"Pipeline complete: new={result.new_count}, merged={result.merged_count}, "
-            f"updated={result.updated_count}, discarded={result.discarded_count}, "
-            f"conflict={result.conflict_count}"
+            f"updated={result.updated_count}, discarded={result.discarded_count}"
         )
         return result
 
@@ -514,9 +492,11 @@ class MemoryPipeline:
                     existing = result.scalar_one_or_none()
 
                     if existing:
-                        # 保存旧版本信息用于替代关系
                         old_version = existing.version or 1
-                        old_content = existing.content
+
+                        # 快照旧版本到历史表
+                        from app.services.memory_service import snapshot_memory_history
+                        snapshot_memory_history(db, existing, dr.action.value)
 
                         existing.content = dr.content
                         existing.summary = dr.summary
@@ -528,23 +508,7 @@ class MemoryPipeline:
                         existing.version = old_version + 1
                         existing.updated_at = _now()
 
-                        # 建立关系图谱边
-                        if dr.action == DedupAction.UPDATE_EXISTING:
-                            relation_type = "replaces"
-                            relation_desc = f"v{old_version} replaced by new content: {dr.summary[:100]}"
-                        else:
-                            relation_type = "supplements"
-                            relation_desc = f"v{old_version} supplemented with: {dr.summary[:100]}"
-
-                        db.add(_create_relation(
-                            source_id=memory_id,
-                            target_id=memory_id,
-                            relation_type=relation_type,
-                            description=relation_desc,
-                            confidence=0.85,
-                        ))
-
-                        # 更新 Qdrant 向量 + T_MEMORY_VECTOR 桥接
+                        # 更新 Qdrant 向量 + T_MEMORY_VECTOR 桥接（不再建自引用关系边）
                         try:
                             vector = await self.embedding.embed_single(dr.content)
                             from app.core.qdrant_client import _str_to_uuid
@@ -588,82 +552,6 @@ class MemoryPipeline:
                         logger.warning(f"Memory {memory_id} not found for MERGE/UPDATE")
                 except Exception as e:
                     logger.error(f"Failed to update memory {memory_id}: {e}")
-
-            elif dr.action == DedupAction.CONFLICT:
-                # 冲突处理：走 create_memory 类型路由（fact 自动标 conflict）
-                from app.services.memory_service import create_memory
-                memory_id = _gen_id("mem")
-                dr.memory_id = memory_id
-
-                memory = await create_memory(db, {
-                    "memory_id": memory_id,
-                    "user_id": user_id,
-                    "agent_id": agent_id,
-                    "scene_id": scene_id,
-                    "session_id": session_id,
-                    "task_id": task_id,
-                    "content": dr.content,
-                    "summary": dr.summary,
-                    "key_points": dr.key_points,
-                    "memory_type": dr.memory_type,
-                    "tags": dr.tags,
-                    "entities": dr.entities,
-                    "status": "conflict",
-                    "importance": dr.importance,
-                    "confidence": dr.confidence,
-                    "source_type": "extracted",
-                    "source_record_ids": source_record_ids or [],
-                    "version": 1,
-                })
-                await db.flush()
-
-                # 为冲突双方建立关系记录
-                for conflict_id in dr.conflict_with:
-                    relation = MemoryRelation(
-                        source_memory_id=memory_id,
-                        target_memory_id=conflict_id,
-                        relation_type="conflicts_with",
-                        description=f"潜在冲突: {dr.message}",
-                        confidence=0.5,
-                    )
-                    db.add(relation)
-
-                    # 将被冲突的旧记忆也标记为 pending（如果当前是 active）
-                    try:
-                        from sqlalchemy import select as _select, update as _update
-                        await db.execute(
-                            _update(Memory)
-                            .where(
-                                Memory.memory_id == conflict_id,
-                                Memory.status == "active",
-                            )
-                            .values(status="pending", updated_at=_now())
-                        )
-                    except Exception as e:
-                        logger.warning(f"Failed to update conflict target {conflict_id}: {e}")
-
-                # mem0 写入冲突记忆
-                try:
-                    from app.services.mem0_client import mem0_client as _m0
-                    _m0.add(
-                        messages=[{"role": "user", "content": dr.content}],
-                        user_id=user_id,
-                        agent_id=agent_id,
-                        session_id=session_id,
-                        metadata={
-                            "memory_id": memory_id,
-                            "scene_id": scene_id,
-                            "task_id": task_id,
-                            "session_id": session_id,
-                            "memory_type": dr.memory_type,
-                            "status": "conflict",
-                            "importance": dr.importance,
-                            "confidence": dr.confidence,
-                        },
-                        infer=False,
-                    )
-                except Exception as e:
-                    logger.warning(f"mem0 write failed for conflict {memory_id}: {e}")
 
         # 提交数据库
         try:

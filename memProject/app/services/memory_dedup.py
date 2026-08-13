@@ -1,27 +1,23 @@
 # -*- coding: utf-8 -*-
 """
-Memory Dedup Service — 多阶段记忆去重与融合引擎。
+Memory Dedup Service — 单层记忆去重与融合引擎（v3）。
 
 去重算法流程：
-  1. 向量相似度检索（Qdrant 语义搜索）
-  2. 数据库加载完整候选记忆
-  3. 关键词重合计算（Jaccard 系数）
-  4. 标识一致性判断（task_id + session_id + entities 重叠）
-  5. 冲突检测（偏好变化 / 任务约束调整 / 事实更新）
-  6. 综合评分决策（DISCARD / MERGE / UPDATE_EXISTING / CONFLICT / KEEP_NEW）
-  7. 融合执行（合并内容、要点、实体，建立版本关系）
-  8. 审计记录（写入 DedupAudit 表）
+  1. 为每个候选并行搜相似记忆（Qdrant，扩大候选范围）
+  2. LLM 批量判断动作 + 输出「局部整合」后的内容
+  3. 应用决策（含审计 + 动态权重调整）
 
-新增功能（v2）：
-  - CONFLICT 决策动作：无法自动判断时保留双方，标记冲突
-  - 会话级标识校验（session_id）
-  - 冲突检测：偏好变化、任务约束调整、事实更新
-  - 融合审计追踪（DedupAudit 表）
-  - 版本管理与替代关系（replaced_by + MemoryRelation）
-  - 动态权重调整（高频确认提升权重，过期降权）
+动作语义：
+  - keep_new:        全新信息，新建记忆
+  - discard:         与已有记忆高度重复，不写入
+  - merge:           补充信息 → 局部合并（保留旧内容，自然融入新信息）
+  - update_existing: 纠正/矛盾取值 → 局部纠错（最新为准，只改矛盾取值，旧值入历史）
+
+注意：本模块已合并原 preference/fact 的类型专属去重。偏好「同主题替换」、
+事实「矛盾取值纠正」等类型规则已揉进 LLM 批量判断的 prompt 中。
 """
 
-import re
+import json
 import uuid
 from dataclasses import dataclass, field
 from enum import Enum
@@ -33,15 +29,23 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.logger import get_logger
 from app.core.qdrant_client import QdrantClientSingleton
-from app.models.base import Memory, MemoryRelation, DedupAudit
+from app.models.base import Memory, DedupAudit
 from app.services.embedding_client import EmbeddingClient
 from app.services.memory_generator import MemoryCandidate
 
 logger = get_logger("memory_dedup")
 import sys
-print("DEDUP_V2_LOADED_PRINT", file=sys.stderr, flush=True)
+print("DEDUP_V3_LOADED_PRINT", file=sys.stderr, flush=True)
 
 _audit_id_prefix = "audit"
+
+# 去重候选搜索范围（合并两套去重后扩大，覆盖原 preference/fact 的穷举搜索）
+_SIMILAR_TOP_K = 50
+_SIMILAR_SCORE_THRESHOLD = 0.5
+# 给 LLM 看的相似记忆条数（截断）
+_LLM_TOP_MATCHES = 5
+# 旧内容给 LLM 时的截断长度（局部整合需完整旧内容，仅防超长）
+_LLM_CONTENT_MAX = 2000
 
 
 def _now() -> datetime:
@@ -57,25 +61,14 @@ class DedupAction(str, Enum):
     MERGE = "merge"
     DISCARD = "discard"
     UPDATE_EXISTING = "update_existing"
-    CONFLICT = "conflict"  # 新增：无法自动判断，保留双方并标记冲突
-
-
-@dataclass
-class SimilarMemory:
-    """与候选记忆相似的已有记忆"""
-    memory_id: str
-    content: str
-    vector_score: float           # 余弦相似度 (0-1)
-    keyword_overlap: float        # Jaccard 系数 (0-1)
-    identity_match: bool          # 是否同一实体/任务/会话
 
 
 @dataclass
 class DedupResult:
     """去重决策结果"""
     action: DedupAction
-    memory_id: Optional[str] = None       # 分配或已有的 memory_id
-    content: str = ""                     # 最终内容（合并后）
+    memory_id: Optional[str] = None       # 目标 memory_id（merge/update/discard 时指向已有记忆）
+    content: str = ""                     # 最终内容（整合后）
     summary: str = ""
     key_points: list[str] = field(default_factory=list)
     memory_type: str = "fact"
@@ -83,21 +76,13 @@ class DedupResult:
     entities: list[str] = field(default_factory=list)
     importance: float = 0.5
     confidence: float = 0.5
-    merged_from: list[str] = field(default_factory=list)  # 合并来源的 memory_ids
-    replaced_by: Optional[str] = None     # 替代关系（旧记忆 → 新记忆）
-    conflict_with: list[str] = field(default_factory=list)  # 冲突记忆 IDs
+    merged_from: list[str] = field(default_factory=list)  # 合并来源 memory_ids
     message: str = ""
-    # 审计信息
     audit: Optional[dict] = None          # 审计记录数据
 
 
 class DedupService:
-    """
-    多阶段记忆去重引擎（v2）。
-
-    对每个候选记忆执行：
-      vector → DB load → keyword calc → identity check → conflict detection → composite decision → merge → audit
-    """
+    """单层记忆去重引擎（v3）。"""
 
     def __init__(
         self,
@@ -107,11 +92,9 @@ class DedupService:
         keyword_weight: float = 0.3,
         identity_weight: float = 0.2,
     ) -> None:
+        # 权重参数保留仅为向后兼容（v3 单层去重已不再使用关键词/标识权重）
         self._embedding = embedding_client
         self._qdrant = qdrant
-        self._vec_w = vector_weight
-        self._kw_w = keyword_weight
-        self._id_w = identity_weight
 
     async def process_candidates(
         self,
@@ -120,55 +103,126 @@ class DedupService:
         db: AsyncSession,
         task_id: Optional[str] = None,
         session_id: Optional[str] = None,
-        similarity_threshold: float = 0.85,
+        similarity_threshold: float = _SIMILAR_SCORE_THRESHOLD,
         keyword_threshold: float = 0.5,
     ) -> list[DedupResult]:
         """
         对候选记忆列表逐一执行去重决策。
-
-        Args:
-            candidates: 待处理的记忆候选
-            user_id: 用户标识
-            db: 数据库会话
-            task_id: 当前任务 ID
-            session_id: 当前会话 ID（v2 新增）
-            similarity_threshold: 向量相似度阈值
-            keyword_threshold: 关键词重合阈值
 
         Returns:
             DedupResult 列表
         """
         if not self._qdrant.is_available:
             logger.warning("Qdrant unavailable, skipping dedup — all candidates KEEP_NEW")
-            return [
-                DedupResult(
-                    action=DedupAction.KEEP_NEW,
-                    content=c.content,
-                    summary=c.summary,
-                    key_points=c.key_points,
-                    memory_type=c.memory_type,
-                    tags=c.tags,
-                    entities=c.entities,
-                    importance=c.importance,
-                    confidence=c.confidence,
-                    message="Qdrant 不可用，跳过去重",
-                )
-                for c in candidates
-            ]
+            return [self._make_keep_new(c, "Qdrant 不可用，跳过去重") for c in candidates]
 
         results: list[DedupResult] = []
 
+        # ── Step 1: 为所有候选并行搜相似记忆 ──
+        candidate_matches: list[dict] = []
         for candidate in candidates:
-            result = await self._process_single(
-                candidate=candidate,
-                user_id=user_id,
-                db=db,
-                task_id=task_id,
-                session_id=session_id,
+            matches = await self._find_similar(
+                candidate=candidate, user_id=user_id, db=db,
+                task_id=task_id, session_id=session_id,
                 similarity_threshold=similarity_threshold,
-                keyword_threshold=keyword_threshold,
             )
-            results.append(result)
+            candidate_matches.append({"candidate": candidate, "similar": matches})
+
+        # ── Step 2: LLM 批量判断（动作 + 局部整合后内容）──
+        llm_decisions = await self._llm_dedup_batch(candidate_matches)
+
+        # ── Step 3: 应用决策 ──
+        for i, cm in enumerate(candidate_matches):
+            candidate = cm["candidate"]
+            best_match = cm["similar"][0] if cm["similar"] else None
+            best_memory = best_match.get("memory") if best_match else None
+
+            decision = llm_decisions.get(i)
+            if decision:
+                action = decision.get("action", DedupAction.KEEP_NEW)
+                llm_content = (decision.get("content") or "").strip()
+            else:
+                # LLM 未返回决策 → 机械兜底（基于向量分数）
+                if best_match:
+                    score = best_match.get("vector_score", 0.0)
+                    if score >= 0.95:
+                        action = DedupAction.DISCARD
+                    elif score >= 0.7:
+                        action = DedupAction.MERGE
+                    else:
+                        action = DedupAction.KEEP_NEW
+                else:
+                    action = DedupAction.KEEP_NEW
+                llm_content = ""
+
+            if action == DedupAction.KEEP_NEW:
+                results.append(self._make_keep_new(
+                    candidate, "LLM判定无匹配",
+                    audit_data=self._build_audit(candidate, None, None),
+                ))
+
+            elif action == DedupAction.DISCARD and best_match:
+                dr = DedupResult(
+                    action=DedupAction.DISCARD,
+                    memory_id=best_match["memory_id"],
+                    content=candidate.content,
+                    summary=candidate.summary,
+                    key_points=candidate.key_points,
+                    memory_type=candidate.memory_type,
+                    tags=candidate.tags,
+                    entities=candidate.entities,
+                    importance=candidate.importance,
+                    confidence=candidate.confidence,
+                    message=f"LLM判定与 {best_match['memory_id']} 重复",
+                )
+                dr.audit = self._build_audit(candidate, best_match, best_memory)
+                results.append(dr)
+
+            elif action == DedupAction.MERGE and best_match and best_memory:
+                # 局部合并：优先用 LLM 整合结果，失败退回机械追加
+                merged = self._merge_content(candidate, best_memory)
+                content = llm_content or merged["content"]
+                dr = DedupResult(
+                    action=DedupAction.MERGE,
+                    memory_id=best_match["memory_id"],
+                    content=content,
+                    summary=merged["summary"],
+                    key_points=merged["key_points"],
+                    memory_type=candidate.memory_type,
+                    tags=merged["tags"],
+                    entities=merged["entities"],
+                    importance=max(candidate.importance, float(best_memory.importance or 0.5)),
+                    confidence=max(candidate.confidence, float(best_memory.confidence or 0.5)),
+                    merged_from=[best_match["memory_id"]],
+                    message=f"LLM判定与 {best_match['memory_id']} 合并",
+                )
+                dr.audit = self._build_audit(candidate, best_match, best_memory, after_content=content)
+                results.append(dr)
+
+            elif action == DedupAction.UPDATE_EXISTING and best_match:
+                # 局部纠错：优先用 LLM 纠正结果，失败退回整条覆盖
+                content = llm_content or candidate.content
+                dr = DedupResult(
+                    action=DedupAction.UPDATE_EXISTING,
+                    memory_id=best_match["memory_id"],
+                    content=content,
+                    summary=candidate.summary,
+                    key_points=candidate.key_points,
+                    memory_type=candidate.memory_type,
+                    tags=list(set(candidate.tags)),
+                    entities=list(set(candidate.entities)),
+                    importance=max(candidate.importance, 0.5),
+                    confidence=max(candidate.confidence, 0.5),
+                    message=f"LLM判定覆盖 {best_match['memory_id']}",
+                )
+                dr.audit = self._build_audit(candidate, best_match, best_memory, after_content=content)
+                results.append(dr)
+
+            else:
+                results.append(self._make_keep_new(
+                    candidate, "无匹配",
+                    audit_data=self._build_audit(candidate, None, None),
+                ))
 
         # 写入审计记录
         await self._write_audit_trail(results, user_id, task_id, session_id, db)
@@ -176,14 +230,13 @@ class DedupService:
         # 动态调整权重
         await self._adjust_weights(results, db)
 
-        actions = {
-            a: sum(1 for r in results if r.action == a)
-            for a in DedupAction
-        }
+        actions = {a: sum(1 for r in results if r.action == a) for a in DedupAction}
         logger.info(f"Dedup complete: {len(candidates)} candidates → {actions}")
         return results
 
-    async def _process_single(
+    # ── 为单个候选找相似记忆 ──
+
+    async def _find_similar(
         self,
         candidate: MemoryCandidate,
         user_id: str,
@@ -191,460 +244,155 @@ class DedupService:
         task_id: Optional[str],
         session_id: Optional[str],
         similarity_threshold: float,
-        keyword_threshold: float,
-    ) -> DedupResult:
-        """对单个候选记忆执行完整去重流程。"""
-
-        # Stage 1: 向量相似度检索
+    ) -> list[dict]:
+        """为单个候选记忆查找相似记忆，返回 [{memory_id, content, memory_type, vector_score, memory}]"""
         try:
             query_vector = await self._embedding.embed_single(candidate.content)
             hits = self._qdrant.search_similar(
-                query_vector=query_vector,
-                user_id=user_id,
-                top_k=8,
-                score_threshold=0.65,
+                query_vector=query_vector, user_id=user_id,
+                top_k=_SIMILAR_TOP_K, score_threshold=similarity_threshold,
             )
-        except Exception as e:
-            logger.warning(f"Vector search failed for dedup: {e}")
-            return self._make_keep_new(candidate, "向量检索失败，默认保留")
+        except Exception:
+            return []
 
         if not hits:
-            # 无重复：正常完成去重且确认无相似记忆 → 记录审计作为一次 completed keep_new
-            return self._make_keep_new(candidate, "无相似向量匹配", audit_data={
-                "candidate_content": candidate.content[:500],
-                "candidate_memory_type": candidate.memory_type,
-                "matched_memory_id": None,
-                "matched_content": None,
-                "vector_score": None,
-                "keyword_overlap": None,
-                "identity_match": False,
-                "composite_score": None,
-            })
+            return []
 
-        # Stage 2: T_MEMORY_VECTOR 桥接 → T_MEMORY 加载已有记忆
         from app.models.base import MemoryVector
         point_scores = {str(h["id"]): h["score"] for h in hits}
-
-        try:
-            mv_result = await db.execute(
-                select(MemoryVector).where(
-                    MemoryVector.vector_store_id.in_(list(point_scores.keys()))
-                )
-            )
-            # vector_store_id → memory_id
-            vid_to_mid = {mv.vector_store_id: mv.memory_id for mv in mv_result.scalars().all()}
-        except Exception as e:
-            logger.warning(f"T_MEMORY_VECTOR lookup failed for dedup: {e}")
-            return self._make_keep_new(candidate, "桥接表查询失败，保留新记忆")
-
+        mv_result = await db.execute(
+            select(MemoryVector).where(MemoryVector.vector_store_id.in_(list(point_scores.keys())))
+        )
+        vid_to_mid = {mv.vector_store_id: mv.memory_id for mv in mv_result.scalars().all()}
         if not vid_to_mid:
-            return self._make_keep_new(candidate, "无匹配桥接记录")
+            return []
 
         mid_scores = {vid_to_mid[vid]: point_scores[vid] for vid in vid_to_mid if vid in point_scores}
+        mem_result = await db.execute(
+            select(Memory).where(
+                Memory.memory_id.in_(list(mid_scores.keys())),
+                Memory.status.in_(["active", "pending"]),
+            )
+        )
+        existing = {m.memory_id: m for m in mem_result.scalars().all()}
 
-        existing_memories: list[Memory] = []
+        matches = []
+        for mid, score in mid_scores.items():
+            mem = existing.get(mid)
+            if mem:
+                matches.append({
+                    "memory_id": mid,
+                    "content": mem.content or "",
+                    "memory_type": mem.memory_type or "fact",
+                    "vector_score": score,
+                    "memory": mem,
+                })
+        matches.sort(key=lambda x: x["vector_score"], reverse=True)
+        return matches[:10]
+
+    # ── LLM 批量去重判断（含类型规则 + 局部整合）──
+
+    async def _llm_dedup_batch(self, candidate_matches: list[dict]) -> dict[int, dict]:
+        """
+        一次 LLM 调用判断所有候选与其相似记忆的关系，并输出局部整合后的内容。
+        返回 {candidate_index: {"action": DedupAction, "content": str}}
+        """
+        has_matches = [(i, cm) for i, cm in enumerate(candidate_matches) if cm["similar"]]
+
+        if not has_matches:
+            return {}
+
+        lines = []
+        for idx, cm in has_matches:
+            c = cm["candidate"]
+            lines.append(f"[候选{idx}] type={c.memory_type}, content=\"{c.content[:_LLM_CONTENT_MAX]}\"")
+            for j, m in enumerate(cm["similar"][:_LLM_TOP_MATCHES]):
+                lines.append(
+                    f"  相似{j + 1}: [{m['memory_id']}] type={m['memory_type']}, "
+                    f"score={m['vector_score']:.3f}, content=\"{m['content'][:_LLM_CONTENT_MAX]}\""
+                )
+
+        prompt = (
+            "你是记忆去重系统，负责判断一条「新候选记忆」与「已有相似记忆」的关系，并决定如何处理。\n\n"
+            "## 任务\n"
+            "对每条候选记忆，输出一个 JSON 对象：key 为候选编号(整数)，value 为 {\"action\": 动作, \"content\": 整合后的内容}。只输出 JSON，不要额外解释。\n\n"
+            "## 四种动作（请仔细区分含义）\n\n"
+            "1. keep_new（新增）\n"
+            "   含义：候选是全新信息，或与已有记忆属于「不同的事实/维度/新诉求」，应独立成条，不合并。\n"
+            "   content：填候选的原始内容。\n"
+            "   例：已有「用户喜欢咖啡」，候选「用户喜欢茶」——两者是不同偏好、都成立、不矛盾，应 keep_new（两条都保留）。\n\n"
+            "2. merge（补充/合并）\n"
+            "   含义：候选是对「同一事实」的补充细节或状态更新，让原记忆更完整，但**不改变原有事实的取值**。\n"
+            "   content：填「局部合并」结果——保留旧内容，把新信息自然融入（不要机械追加一行，也不要加「[更新]」这类标记）。\n"
+            "   例：已有「订单DH001退款3个工作日」，候选「用户已电话咨询退款流程」——同一订单的补充细节，应 merge。\n\n"
+            "3. update_existing（纠正/覆盖更新）\n"
+            "   含义：候选与已有记忆在「同一事实」上取值相反或矛盾（互相矛盾、不能同时成立）。处理原则：以最新的候选为准，旧值作废进入历史。\n"
+            "   content：填「小范围更新」结果——只把矛盾的那个取值改成新值，其余无关信息（订单号、其他事实等）原样保留；**不要标注旧值**（不要写「而非之前说的3个工作日」这类话，直接干净地写新值）。\n"
+            "   例：已有「退款3个工作日」，候选「退款实际是7个工作日」——同一事实取值矛盾，应 update_existing，新内容只写「7个工作日」。\n\n"
+            "4. discard（重复/丢弃）\n"
+            "   含义：候选的含义已被已有记忆完全覆盖、没有任何新信息。包括：①「同一含义、仅措辞不同」的重复；②候选是已有记忆「语义上的子集」（候选说的内容，已有记忆已全部包含）。\n"
+            "   content：填空字符串。\n"
+            "   例1：已有「用户喜欢喝咖啡」，候选「用户偏好咖啡」——同一含义、措辞不同，应 discard。\n"
+            "   例2：已有「订单DH001已提交退货，退款7个工作日，用户电话咨询过」，候选「用户想退货订单DH001」——候选是已有记忆的子集、无新信息，应 discard。\n\n"
+            "## 边界（如何归类）\n"
+            "- 什么算「重复」：同一含义仅措辞不同，或候选是已有记忆语义上的子集（无新信息）→ discard。\n"
+            "- 什么算「补充」：同一事实、新增了细节/状态、但不改变原有取值 → merge。\n"
+            "- 什么算「矛盾/纠正」：同一事实、取值相反/矛盾 → update_existing（最新为准）。\n"
+            "- 什么算「全新」：不同事实/维度/新诉求（如催办、新问题）→ keep_new。\n\n"
+            "## 反向约束（一定不要）\n"
+            "- 不要把「不同但都成立」的事实（如喜欢咖啡 vs 喜欢茶）判成矛盾，那是 keep_new。\n"
+            "- update_existing 的 content 里不要出现旧值标注（不要「而非之前说的3个工作日」这种）。\n"
+            "- 不要机械追加「[更新]」这类标记，要自然融入。\n\n"
+            "## 候选与相似记忆\n"
+            + "\n".join(lines)
+            + "\n\n输出 JSON:"
+        )
+
         try:
-            result = await db.execute(
-                select(Memory).where(
-                    Memory.memory_id.in_(list(mid_scores.keys())),
-                    Memory.status.in_(["active", "pending"]),
-                )
-            )
-            existing_memories = list(result.scalars().all())
+            from app.services.llm_client import llm_client
+            result = await llm_client.chat_completion([{
+                "role": "user",
+                "content": prompt,
+            }], max_tokens=3000)
+
+            data = json.loads(result)
+            action_map = {
+                "keep_new": DedupAction.KEEP_NEW,
+                "discard": DedupAction.DISCARD,
+                "merge": DedupAction.MERGE,
+                "update_existing": DedupAction.UPDATE_EXISTING,
+            }
+            decisions: dict[int, dict] = {}
+            for key_str, val in data.items():
+                try:
+                    idx = int(key_str)
+                except (ValueError, TypeError):
+                    continue
+                if isinstance(val, dict):
+                    action_str = val.get("action", "keep_new")
+                    content = val.get("content", "") or ""
+                else:
+                    action_str = str(val)
+                    content = ""
+                decisions[idx] = {
+                    "action": action_map.get(action_str, DedupAction.KEEP_NEW),
+                    "content": content,
+                }
+            return decisions
         except Exception as e:
-            logger.warning(f"DB load failed for dedup: {e}")
-            return self._make_keep_new(candidate, "数据库加载失败，保留新记忆")
+            logger.warning(f"LLM dedup batch failed, all KEEP_NEW: {e}")
+            return {}
 
-        if not existing_memories:
-            return self._make_keep_new(candidate, "无匹配数据库记录")
-
-        # 为每个已有记忆计算相似度
-        similar_memories: list[SimilarMemory] = []
-        hit_score_map = mid_scores
-
-        for existing in existing_memories:
-            vector_score = hit_score_map.get(existing.memory_id, 0.0)
-            keyword_overlap = self._compute_keyword_overlap(candidate, existing)
-            # 安全网：向量明确相似但分词失败 → 设置底线，不让关键词分拖垮 composite
-            if vector_score > 0.85 and keyword_overlap < 0.15:
-                keyword_overlap = 0.15
-            identity_match = self._check_identity(
-                candidate, existing, task_id, session_id
-            )
-
-            similar_memories.append(
-                SimilarMemory(
-                    memory_id=existing.memory_id,
-                    content=existing.content or "",
-                    vector_score=vector_score,
-                    keyword_overlap=keyword_overlap,
-                    identity_match=identity_match,
-                )
-            )
-
-        # 找最佳匹配
-        best = max(similar_memories, key=lambda s: s.vector_score)
-
-        # Stage 3-4: 综合决策（含冲突检测）
-        action = self._decide_action(
-            vector_score=best.vector_score,
-            keyword_overlap=best.keyword_overlap,
-            identity_match=best.identity_match,
-            similarity_threshold=similarity_threshold,
-            keyword_threshold=keyword_threshold,
-            candidate=candidate,
-            best_match=best,
-            existing_memories=existing_memories,
-        )
-
-        # 构建审计数据
-        audit_data = {
-            "candidate_content": candidate.content[:500],
-            "candidate_memory_type": candidate.memory_type,
-            "matched_memory_id": best.memory_id,
-            "matched_content": best.content[:500],
-            "vector_score": best.vector_score,
-            "keyword_overlap": best.keyword_overlap,
-            "identity_match": best.identity_match,
-            "composite_score": (
-                0.5 * best.vector_score + 0.3 * best.keyword_overlap
-                + 0.2 * (1.0 if best.identity_match else 0.0)
-            ),
-        }
-
-        # Stage 5: 执行对应的处理
-        if action == DedupAction.DISCARD:
-            return DedupResult(
-                action=DedupAction.DISCARD,
-                memory_id=best.memory_id,
-                content=candidate.content,
-                summary=candidate.summary,
-                key_points=candidate.key_points,
-                memory_type=candidate.memory_type,
-                tags=candidate.tags,
-                entities=candidate.entities,
-                importance=candidate.importance,
-                confidence=candidate.confidence,
-                message=f"与现有记忆 {best.memory_id} 高度重复 (vec={best.vector_score:.3f}, kw={best.keyword_overlap:.3f})",
-                audit=audit_data,
-            )
-
-        elif action == DedupAction.UPDATE_EXISTING:
-            # 获取已有记忆以建立替代关系
-            existing = next(
-                (e for e in existing_memories if e.memory_id == best.memory_id), None
-            )
-            old_version = existing.version if existing else 1
-            audit_data["before_content"] = existing.content[:500] if existing else ""
-            audit_data["old_version"] = old_version
-            audit_data["new_version"] = old_version + 1
-
-            return DedupResult(
-                action=DedupAction.UPDATE_EXISTING,
-                memory_id=best.memory_id,
-                content=candidate.content,
-                summary=candidate.summary,
-                key_points=candidate.key_points,
-                memory_type=candidate.memory_type,
-                tags=list(set(candidate.tags)),
-                entities=list(set(candidate.entities)),
-                importance=max(candidate.importance, 0.5),
-                confidence=max(candidate.confidence, 0.5),
-                replaced_by=candidate.content,  # 新内容
-                message=f"更新现有记忆 {best.memory_id} (identity match, version {old_version}→{old_version + 1})",
-                audit=audit_data,
-            )
-
-        elif action == DedupAction.MERGE:
-            existing = next(
-                (e for e in existing_memories if e.memory_id == best.memory_id), None
-            )
-            if existing:
-                merged = self._merge_content(candidate, existing)
-                audit_data["before_content"] = existing.content[:500] if existing else ""
-                audit_data["after_content"] = merged["content"][:500]
-
-                return DedupResult(
-                    action=DedupAction.MERGE,
-                    memory_id=best.memory_id,
-                    content=merged["content"],
-                    summary=merged["summary"],
-                    key_points=merged["key_points"],
-                    memory_type=candidate.memory_type,
-                    tags=merged["tags"],
-                    entities=merged["entities"],
-                    importance=merged["importance"],
-                    confidence=merged["confidence"],
-                    merged_from=[best.memory_id],
-                    message=f"合并到现有记忆 {best.memory_id} (vec={best.vector_score:.3f})",
-                    audit=audit_data,
-                )
-            else:
-                return self._make_keep_new(candidate, "合并目标不可用，保留新记忆")
-
-        elif action == DedupAction.CONFLICT:
-            # 新旧记忆存在冲突但无法自动判断
-            existing = next(
-                (e for e in existing_memories if e.memory_id == best.memory_id), None
-            )
-            audit_data["before_content"] = existing.content[:500] if existing else ""
-            return DedupResult(
-                action=DedupAction.CONFLICT,
-                memory_id=None,  # 新记忆会分配新 ID
-                content=candidate.content,
-                summary=candidate.summary,
-                key_points=candidate.key_points,
-                memory_type=candidate.memory_type,
-                tags=["conflict"] + candidate.tags,
-                entities=candidate.entities,
-                importance=candidate.importance,
-                confidence=0.3,  # 冲突状态降低置信度
-                conflict_with=[best.memory_id],
-                message=f"与现有记忆 {best.memory_id} 存在潜在冲突，保留双方并标记 (vec={best.vector_score:.3f})",
-                audit=audit_data,
-            )
-
-        else:  # KEEP_NEW
-            return self._make_keep_new(
-                candidate, "无匹配，保留新记忆", audit_data
-            )
-
-    # ---------- 关键词 ----------
-
-    def _compute_keyword_overlap(
-        self,
-        candidate: MemoryCandidate,
-        existing: Memory,
-    ) -> float:
-        """计算关键词 Jaccard 系数。"""
-        candidate_keywords = set(
-            [t.lower() for t in candidate.tags]
-            + [e.lower() for e in candidate.entities]
-            + self._extract_nouns(candidate.content)
-        )
-        existing_keywords = set(
-            [t.lower() for t in (existing.tags or [])]
-            + [e.lower() for e in (existing.entities or [])]
-            + self._extract_nouns(existing.content or "")
-        )
-
-        if not candidate_keywords or not existing_keywords:
-            return 0.0
-
-        intersection = candidate_keywords & existing_keywords
-        union = candidate_keywords | existing_keywords
-        return len(intersection) / len(union) if union else 0.0
-
-    @staticmethod
-    def _extract_nouns(text: str) -> list[str]:
-        """中英文关键词提取：中文 bigram/trigram + 英文技术术语。
-
-        中文使用字符 bigram + trigram 而非滑动窗口切词，
-        避免相同语义不同表述产生完全不重叠的关键词集合。
-        """
-        # 英文：包含连字符、数字、下划线的技术术语（如 kube-version, semver, api_v2）
-        english = re.findall(r"[a-zA-Z0-9][a-zA-Z0-9_-]{2,}", text)
-
-        # 中文：字符 bigram + trigram（覆盖 2-3 字词，比原滑动窗口鲁棒得多）
-        chinese_chars = re.findall(r"[一-鿿]", text)
-        bigrams = {
-            chinese_chars[i] + chinese_chars[i + 1]
-            for i in range(len(chinese_chars) - 1)
-        }
-        trigrams = {
-            chinese_chars[i] + chinese_chars[i + 1] + chinese_chars[i + 2]
-            for i in range(len(chinese_chars) - 2)
-        }
-
-        keywords = english + list(bigrams | trigrams)
-        seen: set[str] = set()
-        unique: list[str] = []
-        for kw in keywords:
-            low = kw.lower()
-            if low not in seen:
-                seen.add(low)
-                unique.append(low)
-        return unique[:30]
-
-    # ---------- 标识校验（v2 增强：含 session_id）----------
-
-    def _check_identity(
-        self,
-        candidate: MemoryCandidate,
-        existing: Memory,
-        task_id: Optional[str] = None,
-        session_id: Optional[str] = None,
-    ) -> bool:
-        """判断候选记忆与已有记忆是否指向同一实体/任务/会话。"""
-        # 条件 1: 相同 task_id → 强匹配
-        if task_id and existing.task_id == task_id:
-            return True
-
-        # 条件 2: entities 重叠 >= 2 → 强匹配（指向同一实体对象）
-        candidate_entities = set(e.lower() for e in candidate.entities)
-        existing_entities = set(e.lower() for e in (existing.entities or []))
-        entity_overlap = candidate_entities & existing_entities
-        if len(entity_overlap) >= 2:
-            return True
-
-        # 条件 3: 相同 session_id + entities 重叠 >= 1 → 弱匹配
-        if session_id and existing.session_id == session_id and len(entity_overlap) >= 1:
-            return True
-
-        return False
-
-    # ---------- 冲突检测（v2 新增）----------
-
-    def _detect_conflict(
-        self,
-        candidate: MemoryCandidate,
-        existing: Memory,
-        best: SimilarMemory,
-    ) -> tuple[bool, str]:
-        """
-        检测候选记忆与已有记忆之间是否存在冲突。
-
-        检测三种冲突类型：
-        1. 偏好变化：同一偏好对象，新偏好与旧偏好不一致
-        2. 任务约束调整：同一任务，新约束与旧约束矛盾
-        3. 事实更新：同一实体/事实，新旧描述相互矛盾
-
-        Returns:
-            (is_conflict, conflict_reason)
-        """
-        # 仅在高相似度但不完全相同时检测冲突
-        if best.vector_score < 0.75:
-            return False, ""
-
-        # 类型一致性检查
-        candidate_type = candidate.memory_type
-        existing_type = existing.memory_type or "fact"
-
-        # 同一类型的新旧记忆，内容语义高度相似但表述不同 → 可能冲突
-        if candidate_type == existing_type:
-            # 偏好变化检测
-            if candidate_type == "preference":
-                # 使用简单否定词检测
-                negation_words = ["不再", "不要", "改为", "换成", "替代", "替换", "instead", "rather", "prefer not"]
-                has_negation = any(w in candidate.content.lower() for w in negation_words)
-                has_old_content = len(existing.content or "") > 20
-
-                if has_negation and has_old_content and best.vector_score >= 0.75:
-                    return True, "检测到偏好变化: 新表述包含否定/替代词，可能取代旧偏好"
-
-            # 任务约束调整检测
-            if candidate_type == "constraint":
-                severity_words = ["必须", "严禁", "不能", "要求", "must", "required", "cannot"]
-                if any(w in candidate.content.lower() for w in severity_words) and best.vector_score >= 0.80:
-                    return True, "检测到任务约束调整: 新旧约束均包含强制性表述，可能存在冲突"
-
-            # 事实更新检测（版本号/时间标记）
-            if candidate_type == "fact":
-                # 如果已有记忆较旧且有新信息出现
-                if existing.updated_at and best.vector_score >= 0.85:
-                    # 检查是否有时间更新标记
-                    time_words = ["更新", "最新", "现在", "目前", "current", "latest", "updated", "now"]
-                    if any(w in candidate.content.lower() for w in time_words):
-                        return True, "检测到事实可能更新: 新旧表述相近但新内容包含时间更新标记"
-
-        return False, ""
-
-    # ---------- 综合决策（v2：含 CONFLICT）----------
-
-    def _decide_action(
-        self,
-        vector_score: float,
-        keyword_overlap: float,
-        identity_match: bool,
-        similarity_threshold: float = 0.85,
-        keyword_threshold: float = 0.5,
-        candidate: Optional[MemoryCandidate] = None,
-        best_match: Optional[SimilarMemory] = None,
-        existing_memories: Optional[list[Memory]] = None,
-    ) -> DedupAction:
-        """
-        串行门控去重决策 — 对齐设计文档 5.2.3。
-
-        第一步：相似度匹配（向量）
-          vector_score >= 0.85 → 进入下一步；否则 KEEP_NEW
-
-        第二步：结构化匹配（关键词 + 记忆类型）
-          keyword_overlap >= 0.5 + memory_type 一致 → 进入候选集；否则 KEEP_NEW
-
-        第三步：标识校验（user_id / session_id / task_id / entities）
-          identity_match = True （同 user + (同 session 或 同 task 或 entities ≥ 2)）→ 进入融合；否则 KEEP_NEW
-
-        第四步：融合决策
-          vector >= 0.95 + keyword >= 0.70 + identity → 重复，不写入 (DISCARD)
-          vector >= 0.85 + keyword >= 0.50 + identity → 补充信息 (MERGE)
-          冲突检测通过 → 覆盖更新 (UPDATE_EXISTING)
-          冲突无法自动判断 → 标记冲突 (CONFLICT)
-        """
-        # ===== 第一步：相似度匹配 =====
-        if vector_score < similarity_threshold:
-            logger.info(f"DEDUP_GATE: step1 FAIL vector={vector_score:.3f} < {similarity_threshold}")
-            return DedupAction.KEEP_NEW
-
-        # ===== 第二步：结构化匹配（关键词 + 类型） =====
-        if keyword_overlap < keyword_threshold:
-            logger.info(f"DEDUP_GATE: step2 FAIL keyword={keyword_overlap:.3f} < {keyword_threshold}")
-            return DedupAction.KEEP_NEW
-
-        if candidate and best_match and existing_memories:
-            existing = next(
-                (e for e in existing_memories if e.memory_id == best_match.memory_id),
-                None,
-            )
-            if existing and existing.memory_type != candidate.memory_type:
-                logger.info(f"DEDUP_GATE: step2 FAIL type mismatch candidate={candidate.memory_type} existing={existing.memory_type}")
-                return DedupAction.KEEP_NEW
-
-        # ===== 第三步：标识校验 =====
-        if not identity_match:
-            logger.info(f"DEDUP_GATE: step3 FAIL identity_match=False")
-            return DedupAction.KEEP_NEW
-
-        # ===== 第四步：融合决策 =====
-        # 冲突检测
-        is_conflict = False
-        conflict_reason = ""
-        if candidate and best_match and existing_memories:
-            existing = next(
-                (e for e in existing_memories if e.memory_id == best_match.memory_id),
-                None,
-            )
-            if existing:
-                is_conflict, conflict_reason = self._detect_conflict(
-                    candidate, existing, best_match
-                )
-
-        if is_conflict:
-            logger.info(f"Conflict detected: {conflict_reason}")
-            return DedupAction.CONFLICT
-
-        if vector_score >= 0.95 and keyword_overlap >= 0.70:
-            return DedupAction.DISCARD
-
-        if vector_score >= 0.85 and keyword_overlap >= 0.50:
-            return DedupAction.MERGE
-
-        if vector_score >= 0.78:
-            return DedupAction.UPDATE_EXISTING
-
-        return DedupAction.MERGE
-
-    # ---------- 内容合并 ----------
+    # ── 内容合并（LLM 失败时的机械兜底）──
 
     def _merge_content(
         self,
         candidate: MemoryCandidate,
         existing: Memory,
     ) -> dict:
-        """合并候选记忆与已有记忆。"""
+        """机械合并兜底：旧内容 + 追加更新摘要（不丢失信息）。"""
         existing_kps = existing.key_points or []
-        all_kps = existing_kps + [
-            kp for kp in candidate.key_points if kp not in existing_kps
-        ]
+        all_kps = existing_kps + [kp for kp in candidate.key_points if kp not in existing_kps]
 
         existing_entities = existing.entities or []
         all_entities = list(set(
@@ -659,17 +407,14 @@ class DedupService:
         if candidate.content not in merged_content:
             merged_content = f"{merged_content}\n[更新: {candidate.summary}]"
 
-        existing_importance = float(existing.importance or 0.5)
-        existing_confidence = float(existing.confidence or 0.5)
-
         return {
             "content": merged_content.strip(),
             "summary": (existing.summary or "") + f" | 更新: {candidate.summary}",
             "key_points": all_kps,
             "tags": all_tags,
             "entities": all_entities,
-            "importance": max(candidate.importance, existing_importance),
-            "confidence": max(candidate.confidence, existing_confidence),
+            "importance": max(candidate.importance, float(existing.importance or 0.5)),
+            "confidence": max(candidate.confidence, float(existing.confidence or 0.5)),
         }
 
     def _make_keep_new(
@@ -693,7 +438,30 @@ class DedupService:
             audit=audit_data,
         )
 
-    # ---------- 审计追踪（v2 新增）----------
+    def _build_audit(
+        self,
+        candidate: MemoryCandidate,
+        best_match: Optional[dict],
+        best_memory: Optional[Memory],
+        after_content: Optional[str] = None,
+    ) -> dict:
+        """构建审计数据。"""
+        return {
+            "candidate_content": candidate.content[:500],
+            "candidate_memory_type": candidate.memory_type,
+            "matched_memory_id": best_match["memory_id"] if best_match else None,
+            "matched_content": (best_match["content"][:500] if best_match else None),
+            "vector_score": best_match["vector_score"] if best_match else None,
+            "keyword_overlap": None,
+            "identity_match": False,
+            "composite_score": None,
+            "before_content": (best_memory.content[:500] if best_memory else None),
+            "after_content": (after_content[:500] if after_content else None),
+            "old_version": best_memory.version if best_memory else None,
+            "new_version": (best_memory.version + 1) if best_memory else None,
+        }
+
+    # ── 审计追踪 ──
 
     async def _write_audit_trail(
         self,
@@ -724,7 +492,7 @@ class DedupService:
                 before_content=dr.audit.get("before_content"),
                 after_content=dr.audit.get("after_content"),
                 old_status="active",
-                new_status="pending" if dr.action == DedupAction.CONFLICT else "active",
+                new_status="active",
                 old_version=dr.audit.get("old_version"),
                 new_version=dr.audit.get("new_version"),
                 user_id=user_id,
@@ -744,25 +512,16 @@ class DedupService:
                 logger.warning(f"Failed to write audit trail: {e}")
                 await db.rollback()
 
-    # ---------- 动态权重调整（v2 新增）----------
+    # ── 动态权重调整 ──
 
     async def _adjust_weights(
         self,
         results: list[DedupResult],
         db: AsyncSession,
     ) -> None:
-        """
-        根据去重结果动态调整已有记忆的权重。
-
-        规则：
-        - 被 MERGE/UPDATE 的记忆：importance += 0.05, confidence += 0.05
-        - 被 DISCARD 的新记忆：已有记忆 use_count += 1, last_used_at 更新
-        - 被 CONFLICT 涉及的旧记忆：confidence -= 0.1
-        - 长期未使用的记忆：decay_factor *= 0.9
-        """
+        """根据去重结果动态调整已有记忆的权重。"""
         for dr in results:
             if dr.action in (DedupAction.MERGE, DedupAction.UPDATE_EXISTING):
-                # 提升被更新记忆的权重
                 memory_id = dr.memory_id or (dr.merged_from[0] if dr.merged_from else None)
                 if memory_id:
                     try:
@@ -776,12 +535,10 @@ class DedupService:
                             existing.use_count = (existing.use_count or 0) + 1
                             existing.last_used_at = _now()
                             existing.decay_factor = min(1.0, float(existing.decay_factor or 1.0) + 0.02)
-                            logger.debug(f"Weight boosted: {memory_id} imp={existing.importance:.2f}")
                     except Exception as e:
                         logger.warning(f"Failed to adjust weight for {memory_id}: {e}")
 
             elif dr.action == DedupAction.DISCARD:
-                # 被判定为重复，提升已有记忆的使用计数
                 memory_id = dr.memory_id
                 if memory_id:
                     try:
@@ -794,21 +551,6 @@ class DedupService:
                             existing.last_used_at = _now()
                     except Exception as e:
                         logger.warning(f"Failed to update use_count for {memory_id}: {e}")
-
-            elif dr.action == DedupAction.CONFLICT:
-                # 冲突涉及的旧记忆降低置信度
-                for conflict_id in dr.conflict_with:
-                    try:
-                        result = await db.execute(
-                            select(Memory).where(Memory.memory_id == conflict_id)
-                        )
-                        existing = result.scalar_one_or_none()
-                        if existing:
-                            existing.confidence = max(0.1, float(existing.confidence or 0.5) - 0.1)
-                            existing.decay_factor = max(0.1, float(existing.decay_factor or 1.0) - 0.05)
-                            logger.debug(f"Confidence reduced for conflict: {conflict_id}")
-                    except Exception as e:
-                        logger.warning(f"Failed to adjust confidence for {conflict_id}: {e}")
 
         try:
             await db.commit()

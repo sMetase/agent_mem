@@ -269,7 +269,10 @@ async def _compute_memory_trend(
 
     时区: Asia/Shanghai 业务日。半开区间。
     """
-    tz = ZoneInfo("Asia/Shanghai")
+    try:
+        tz = ZoneInfo("Asia/Shanghai")
+    except Exception:
+        tz = timezone(timedelta(hours=8))  # Windows 无 IANA 时区库时回退为 UTC+8
     asof_shanghai = as_of.astimezone(tz)
     today = asof_shanghai.date()
 

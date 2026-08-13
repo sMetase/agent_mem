@@ -174,7 +174,6 @@ class Memory(Base):
 
     status = Column(String(32), default="active", index=True)
     version = Column(Integer, default=1)
-    replaced_by = Column(String(64), nullable=True)
 
     importance = Column(Float, default=0.5)
     confidence = Column(Float, default=0.5)
@@ -190,7 +189,6 @@ class Memory(Base):
     source_type = Column(String(32), default="extracted")
     source_record_ids = Column(JSON, default=list)
 
-    memory_scope = Column(String(16), nullable=True, index=True)
     vector_id = Column(String(64), nullable=True, index=True)
 
     created_at = Column(DateTime(timezone=True), default=_now)
@@ -206,6 +204,31 @@ class Memory(Base):
         # 记忆层级统计索引（对齐 memory_scope_v1）
         Index("idx_memory_user_status_scope", "user_id", "status", "memory_scope"),
         Index("idx_memory_user_scene_status_scope", "user_id", "scene_id", "status", "memory_scope"),
+    )
+
+
+# ============================================================
+# 7.1 T_MEMORY_HISTORY
+# ============================================================
+class MemoryHistory(Base):
+    """记忆版本历史快照 — 每次 MERGE/UPDATE/替换 前保存旧版本内容。"""
+    __tablename__ = "t_memory_history"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    memory_id = Column(String(64), nullable=False, index=True)
+    version = Column(Integer, nullable=False)
+    content = Column(Text, nullable=False)
+    summary = Column(Text)
+    key_points = Column(JSON, default=list)
+    tags = Column(JSON, default=list)
+    entities = Column(JSON, default=list)
+    importance = Column(Float, default=0.5)
+    confidence = Column(Float, default=0.5)
+    action = Column(String(32), nullable=True)  # merge / update / replace
+    created_at = Column(DateTime(timezone=True), default=_now)
+
+    __table_args__ = (
+        Index("idx_memory_history_memory", "memory_id", "version"),
     )
 
 

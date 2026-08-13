@@ -180,7 +180,7 @@ async def _dispatch_and_store(
     """
     itype = body.get("interaction_type", "dialogue")
     messages = body.get("messages", [])
-    session_id_val = body.get("session_id") or f"sess_{uuid4().hex[:12]}"
+    session_id_val = body.get("session_id")
 
     async with async_session_factory() as session:
         now = _utcnow()
@@ -267,7 +267,6 @@ def _pipeline_to_results(pipeline_result) -> list[dict]:
       update_existing            → UPDATE
       merge                      → MERGE
       discard                    → SKIP
-      conflict                   → ADD（memory 前缀 [冲突] 标记）
     """
     results = []
     for d in pipeline_result.details:
@@ -279,8 +278,6 @@ def _pipeline_to_results(pipeline_result) -> list[dict]:
             results.append({"id": "", "memory": content, "event": "SKIP"})
         elif action == "merge":
             results.append({"id": memory_id, "memory": content, "event": "MERGE"})
-        elif action == "conflict":
-            results.append({"id": memory_id, "memory": f"[冲突] {content}", "event": "ADD"})
         elif action == "update_existing":
             results.append({"id": memory_id, "memory": content, "event": "UPDATE"})
         else:  # keep_new

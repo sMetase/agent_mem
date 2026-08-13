@@ -12,7 +12,7 @@ from pydantic import BaseModel, Field
 class AgentRegisterRequest(BaseModel):
     """智能体注册请求"""
     agent_name: str = Field(..., min_length=1, max_length=256, description="智能体名称")
-    scene_id: Optional[str] = Field(None, description="所属场景标识")
+    scene_id: str = Field(..., min_length=1, max_length=128, description="所属场景标识（必填，用于数据隔离）")
     permissions: Optional[list[str]] = Field(default=["read", "write"], description="权限列表")
 
 

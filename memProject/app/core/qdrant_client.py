@@ -31,7 +31,7 @@ QDRANT_HOST = "localhost"
 QDRANT_GRPC_PORT = 6333
 COLLECTION_NAME = "agent_mem_generation"  # 独立 collection，不影响 mem0 的 openmemory
 VECTOR_DIM = 1024  # bge-m3 维度
-DEFAULT_SCORE_THRESHOLD = 0.30
+DEFAULT_SCORE_THRESHOLD = 0.7
 
 
 class QdrantClientSingleton:
@@ -87,7 +87,16 @@ class QdrantClientSingleton:
     @property
     def is_available(self) -> bool:
         if self._client is not None:
-            return True
+            # 校验 collection 仍存在（防止外部清库后 client 静默失效）
+            try:
+                names = [c.name for c in self._client.get_collections().collections]
+                if self._collection_name in names:
+                    return True
+                logger.warning(f"Qdrant collection '{self._collection_name}' 不存在，重新初始化")
+                self._client = None
+            except Exception:
+                logger.warning("Qdrant collection 校验失败，重置客户端")
+                self._client = None
         # 惰性初始化
         return self.initialize()
 
@@ -196,6 +205,17 @@ class QdrantClientSingleton:
     ) -> None:
         """写入/更新单条向量。"""
         self.upsert_vectors([vector], [payload], [point_id])
+
+    def update_payload(self, point_id: str, payload: dict) -> None:
+        """更新单条向量的 payload（不更新向量本身）。"""
+        try:
+            self.client.set_payload(
+                collection_name=self._collection_name,
+                payload=payload,
+                points=[_str_to_uuid(point_id)],
+            )
+        except Exception as e:
+            logger.error(f"Qdrant update_payload failed: {e}")
 
     def delete_vectors(self, ids: list[str]) -> None:
         """删除指定 ID 的向量。"""

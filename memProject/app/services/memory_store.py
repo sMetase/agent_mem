@@ -26,6 +26,7 @@ from app.core.logger import get_logger
 from app.core.qdrant_client import QdrantClientSingleton, qdrant_client as _qdrant_singleton
 from app.models.base import Memory
 from app.services.embedding_client import EmbeddingClient, embedding_client as _emb_singleton
+from app.services.memory_service import snapshot_memory_history
 
 logger = get_logger("memory_store")
 
@@ -521,6 +522,14 @@ class MemoryStore:
         deleted_count = len(memory_ids)
         logger.info(f"Deleting {deleted_count} memories for user={user_id}")
 
+        # 清理关联表（历史快照 / 向量桥接 / 关系边）
+        from app.models.base import MemoryHistory, MemoryVector, MemoryRelation
+        if memory_ids:
+            await db.execute(delete(MemoryHistory).where(MemoryHistory.memory_id.in_(memory_ids)))
+            await db.execute(delete(MemoryVector).where(MemoryVector.memory_id.in_(memory_ids)))
+            await db.execute(delete(MemoryRelation).where(MemoryRelation.source_memory_id.in_(memory_ids)))
+            await db.execute(delete(MemoryRelation).where(MemoryRelation.target_memory_id.in_(memory_ids)))
+
         # 删除 PostgreSQL 记录
         delete_stmt = delete(Memory).where(Memory.user_id == user_id)
         if scene_id:
@@ -696,6 +705,9 @@ class MemoryStore:
 
         if not memory:
             return {"memory_id": memory_id, "updated": False, "reason": "记忆不存在"}
+
+        # 快照旧版本到历史表
+        snapshot_memory_history(db, memory, "update")
 
         if content is not None:
             memory.content = content

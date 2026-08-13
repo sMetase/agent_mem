@@ -49,7 +49,7 @@ class MemoryWriteRequest(BaseModel):
     """
     user_id: str = Field(..., min_length=1, max_length=128, description="用户唯一标识")
     scene_id: Optional[str] = Field(None, max_length=128, description="场景标识")
-    session_id: Optional[str] = Field(None, max_length=128, description="会话ID")
+    session_id: str = Field(..., min_length=1, max_length=128, description="会话ID")
     task_id: Optional[str] = Field(None, max_length=128, description="任务标识")
     interaction_type: str = Field(
         default="dialogue",
@@ -164,7 +164,7 @@ class AsyncWriteRequest(BaseModel):
     """异步写入请求 — 同 write 格式，支持三种数据类型"""
     user_id: str = Field(..., min_length=1, max_length=128)
     scene_id: Optional[str] = Field(None, max_length=128)
-    session_id: Optional[str] = Field(None, max_length=128)
+    session_id: str = Field(..., min_length=1, max_length=128)
     task_id: Optional[str] = Field(None, max_length=128)
     interaction_type: str = Field(default="dialogue")
     messages: list[MessageItem] = Field(default_factory=list, max_length=100)
