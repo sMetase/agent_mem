@@ -85,24 +85,6 @@ async def create_memory(db: AsyncSession, data: dict) -> Memory:
     return await _insert_memory(db, data)
 
 
-# 任务关键词 — 四分类
-_TASK_GOAL_KEYWORDS = {"目标", "目的", "诉求", "要做", "goal", "objective"}
-_TASK_PENDING_KEYWORDS = {"待办", "需要", "下一步", "计划", "尚未", "还需", "将", "准备"}
-_TASK_CONCLUSION_KEYWORDS = {"完成", "通过", "上线", "稳定", "结束", "验收", "交付", "已实现", "成功"}
-
-
-def _classify_task(content: str, key_points: list) -> str:
-    """返回 goal / pending / conclusion / progress"""
-    text = content + " " + " ".join(key_points or [])
-    if any(kw in text for kw in _TASK_GOAL_KEYWORDS):
-        return "goal"
-    if any(kw in text for kw in _TASK_PENDING_KEYWORDS):
-        return "pending"
-    if any(kw in text for kw in _TASK_CONCLUSION_KEYWORDS):
-        return "conclusion"
-    return "progress"
-
-
 async def _insert_memory(db: AsyncSession, data: dict) -> Memory:
     """纯插入，不做任何类型逻辑。"""
     memory = Memory(
@@ -126,7 +108,6 @@ async def _insert_memory(db: AsyncSession, data: dict) -> Memory:
         source_type=data.get("source_type", "extracted"),
         source_record_ids=data.get("source_record_ids", []),
         memory_scope=data.get("memory_scope") or _infer_scope(data),
-        vector_id=data.get("vector_id"),
         created_at=data.get("created_at", _now()),
         updated_at=data.get("updated_at", _now()),
     )
@@ -281,85 +262,6 @@ async def build_context_query(db: AsyncSession, filters: dict) -> list[Memory]:
     stmt = stmt.order_by(Memory.importance.desc())
     result = await db.execute(stmt)
     return list(result.scalars().all())
-
-
-# ============================================================
-# 多层记忆聚合 — 用户/会话/任务三层结构化视图
-# ============================================================
-
-
-async def get_user_profile(db: AsyncSession, user_id: str) -> dict:
-    """用户画像：聚合用户跨会话的偏好和事实，供 LLM 注入 prompt。"""
-    all_memories = await search_local(db, {"user_id": user_id, "status": "active"})
-
-    profile = {
-        "user_id": user_id,
-        "preferences": [],
-        "facts": [],
-    }
-    for m in all_memories:
-        if m.memory_type == "preference":
-            profile["preferences"].append(m.content)
-        elif m.memory_type == "fact":
-            profile["facts"].append(m.content)
-    return profile
-
-
-async def get_session_context(db: AsyncSession, session_id: str) -> dict:
-    """会话上下文：会话内所有记忆按类型分组 + 关键内容。"""
-    all_memories = await search_local(db, {"session_id": session_id, "status": "active"})
-
-    ctx: dict = {"session_id": session_id, "by_type": {}, "key_items": []}
-    for m in all_memories:
-        ctx["by_type"].setdefault(m.memory_type, []).append({
-            "memory_id": m.memory_id, "content": m.content, "importance": m.importance,
-        })
-        if m.importance >= 0.7:
-            ctx["key_items"].append({
-                "memory_id": m.memory_id, "content": m.content, "memory_type": m.memory_type,
-            })
-    return ctx
-
-
-async def get_task_view(db: AsyncSession, task_id: str) -> dict:
-    """任务视图：当前目标 + 进展时间线。"""
-    all_memories = await search_local(db, {
-        "task_id": task_id, "status": "active",
-    })
-    all_memories.sort(key=lambda m: m.created_at or datetime.min)
-
-    view: dict = {
-        "task_id": task_id,
-        "current_goal": None,
-        "timeline": [],
-        "constraints": [],
-        "processes": [],
-        "decisions": [],
-        "facts": [],
-    }
-    for m in all_memories:
-        entry = {
-            "memory_id": m.memory_id,
-            "content": m.content,
-            "memory_type": m.memory_type,
-            "created_at": m.created_at.isoformat() if m.created_at else None,
-        }
-        if m.memory_type == "task_state":
-            sub_type = _classify_task(m.content or "", m.key_points or [])
-            entry["sub_type"] = sub_type
-            if sub_type == "goal":
-                view["current_goal"] = {"memory_id": m.memory_id, "content": m.content}
-            view["timeline"].append(entry)
-        elif m.memory_type == "constraint":
-            view["constraints"].append(entry)
-        elif m.memory_type == "process":
-            view["processes"].append(entry)
-        elif m.memory_type == "decision":
-            view["decisions"].append(entry)
-        else:
-            view["facts"].append(entry)
-
-    return view
 
 
 # ============================================================

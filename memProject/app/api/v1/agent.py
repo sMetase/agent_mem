@@ -8,14 +8,14 @@
 - API Key 轮换（旧 Key 立即失效）
 """
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.api.deps import get_current_agent
 from app.core.database import get_db
-from app.core.exceptions import NotFoundError, ConflictError, AuthenticationError
+from app.core.exceptions import NotFoundError, ConflictError, AuthenticationError, AuthorizationError
 from app.core.logger import get_logger
 from app.core.security import generate_agent_id, generate_api_key, hash_api_key
 from app.models.base import Agent
@@ -214,6 +214,7 @@ async def agent_disable(
 @router.post("/{agent_id}/rotate-key", summary="轮换 API Key")
 async def agent_rotate_key(
     agent_id: str,
+    request: Request,
     db: AsyncSession = Depends(get_db),
     _current: str = Depends(get_current_agent),
 ):
@@ -224,6 +225,10 @@ async def agent_rotate_key(
     - 旧 API Key 哈希被覆盖，即刻失效
     - 新 API Key 只在本次响应中返回明文
     """
+    # 越权防护：生产模式下仅允许轮换自己的 key（开发模式 auth_bypassed 跳过）
+    if not getattr(request.state, "auth_bypassed", False) and agent_id != _current:
+        raise AuthorizationError("无权轮换其他智能体的 API Key")
+
     result = await db.execute(
         select(Agent).where(Agent.agent_id == agent_id)
     )

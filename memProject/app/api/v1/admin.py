@@ -9,7 +9,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import select, func, desc
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_agent, require_admin
+from app.api.deps import require_admin
 from app.core.database import get_db
 from app.schemas.common import ok
 from app.models.base import RetrievalRequest, ApiLog
@@ -41,7 +41,7 @@ async def admin_memories(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
-    _admin: str = Depends(get_current_agent),
+    _admin: str = Depends(require_admin),
 ):
     filters = {}
     if user_id: filters["user_id"] = user_id
@@ -55,7 +55,7 @@ async def admin_memories(
 async def admin_memory_detail(
     memory_id: str,
     db: AsyncSession = Depends(get_db),
-    _admin: str = Depends(get_current_agent),
+    _admin: str = Depends(require_admin),
 ):
     memory = await get_memory_by_id(db, memory_id)
     if not memory:
@@ -72,7 +72,7 @@ async def admin_retrieval_logs(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
-    _admin: str = Depends(get_current_agent),
+    _admin: str = Depends(require_admin),
 ):
     since = datetime.now(timezone.utc) - timedelta(hours=hours)
     stmt = select(RetrievalRequest).where(RetrievalRequest.created_at >= since)
@@ -94,7 +94,7 @@ async def admin_retrieval_logs(
 
 
 @router.get("/stats", summary="系统统计概览")
-async def admin_stats(db: AsyncSession = Depends(get_db), _admin: str = Depends(get_current_agent)):
+async def admin_stats(db: AsyncSession = Depends(get_db), _admin: str = Depends(require_admin)):
     return ok(await get_stats(db))
 
 
@@ -141,7 +141,7 @@ async def admin_api_logs(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
-    _admin: str = Depends(get_current_agent),
+    _admin: str = Depends(require_admin),
 ):
     since = datetime.now(timezone.utc) - timedelta(hours=hours)
     stmt = select(ApiLog).where(ApiLog.created_at >= since)
@@ -158,7 +158,8 @@ async def admin_api_logs(
     items = [
         {"log_id": r.log_id, "agent_id": r.agent_id, "api_path": r.api_path,
          "method": r.method, "response_code": r.response_code, "error_code": r.error_code,
-         "elapsed_ms": r.elapsed_ms, "created_at": r.created_at.isoformat() if r.created_at else None}
+         "elapsed_ms": r.elapsed_ms, "trace_id": r.trace_id,
+         "created_at": r.created_at.isoformat() if r.created_at else None}
         for r in result.scalars().all()
     ]
     return ok({"items": items, "total": total, "page": page, "page_size": page_size})

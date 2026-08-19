@@ -16,9 +16,6 @@ from app.services.memory_service import (
     gen_memory_id,
     gen_record_id,
     gen_request_id,
-    get_user_profile,
-    get_session_context,
-    get_task_view,
 )
 
 # 存储读写层（master — memory_store）
@@ -53,9 +50,6 @@ __all__ = [
     "gen_memory_id",
     "gen_record_id",
     "gen_request_id",
-    "get_user_profile",
-    "get_session_context",
-    "get_task_view",
     # master — 存储 + 管线 + MQ
     "MemoryStore",
     "memory_store",

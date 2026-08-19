@@ -33,3 +33,9 @@ tools/
 test_frontend.db
 continue_zh.jsonl
 continue_zh.jsonl
+
+# 大文件（测试数据集 / 打包 / 二进制文档，避免 push 超限）
+大规模数据集*.jsonl
+大规模数据集*.json
+*.tar.gz
+*.docx

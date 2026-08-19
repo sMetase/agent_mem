@@ -9,13 +9,12 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
+import bcrypt
 from jose import JWTError, jwt
-from passlib.context import CryptContext
 
 from app.core.config import get_settings
 
 settings = get_settings()
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 
 # ---- API Key ----
@@ -27,6 +26,19 @@ def generate_api_key() -> str:
 
 def hash_api_key(api_key: str) -> str:
     return hashlib.sha256(api_key.encode()).hexdigest()
+
+
+def hash_password(password: str) -> str:
+    """密码 bcrypt hash（直接用 bcrypt 库，passlib 1.7.4 与 bcrypt 5.x 不兼容）。"""
+    return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+
+
+def verify_password(password: str, password_hash: str) -> bool:
+    """验证密码。"""
+    try:
+        return bcrypt.checkpw(password.encode("utf-8"), password_hash.encode("utf-8"))
+    except Exception:
+        return False
 
 
 def generate_agent_id() -> str:

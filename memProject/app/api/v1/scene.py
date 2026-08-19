@@ -26,9 +26,8 @@ router = APIRouter()
 async def scene_create(
     body: SceneCreateRequest,
     db: AsyncSession = Depends(get_db),
-    _current: str = Depends(get_current_agent),
 ):
-    """创建新场景"""
+    """创建新场景（接入前置，无需鉴权——开启 AUTH_ENABLED 后避免 bootstrap 死锁）"""
     scene_id = generate_scene_id()
 
     scene = Scene(

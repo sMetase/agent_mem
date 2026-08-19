@@ -4,7 +4,6 @@
 
 端点:
   POST /write       — 同步写入记忆
-  POST /async_write — 异步写入（即刻返回 request_id）
   POST /search      — 语义检索记忆（Qdrant + PostgreSQL）
   POST /list        — 分页列出记忆
   POST /delete-all  — 清除全部记忆
@@ -27,7 +26,6 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, Query, Request
 from pydantic import BaseModel, Field
-from sqlalchemy import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import (
@@ -41,33 +39,27 @@ from app.api.deps import (
 )
 from app.core.config import get_settings
 from app.core.database import async_session_factory, get_db
-from app.models.base import InteractionRecord, RetrievalRequest, RetrievalResult
+from app.models.base import RetrievalRequest, RetrievalResult
 from app.core.exceptions import ValidationError
 from app.core.logger import get_logger
 from app.schemas.common import error, ok
 from app.schemas.memory import (
-    AsyncWriteRequest,
-    AsyncWriteResponse,
     ContextRequest,
     MemoryDeleteRequest,
     MemoryDeleteResponse,
-    MemoryEvent,
     MemorySearchRequest,
     MemoryUpdateRequest,
     MemoryUpdateResponse,
     MemoryWriteRequest,
-    MemoryWriteResponse,
-    WriteResultItem,
 )
 from app.services.mem0_client import mem0_client
-from app.services.memory_pipeline import memory_pipeline
-from app.services.memory_store import memory_store
-from app.services.memory_service import (
-    get_user_profile,
-    get_session_context,
-    get_task_view,
+from app.services.l0_store import (
+    gen_record_ids,
+    count_l0_records,
+    build_l0_records,
+    persist_l0,
 )
-from app.services.mq_producer import mq_producer
+from app.services.memory_store import memory_store
 from app.services.validation_service import (
     validate_id_format,
     normalize_id,
@@ -152,7 +144,7 @@ async def memory_write(
     - session (历史会话): 导入历史会话内容、时间、来源信息
     - task_process (任务过程): 写入任务目标、进展、执行结果
 
-    延迟: 5-15s（LLM抽取+生成+去重+存储）。
+    延迟: 毫秒级（异步投递 Kafka，L1 抽取由后台 worker 异步做）。
     """
     start = time_module.perf_counter()
     itype = body.interaction_type
@@ -182,339 +174,63 @@ async def memory_write(
     )
     type_validation.raise_if_invalid()
 
-    # --- 写入原始交互记录（批量 insert）---
-    await _batch_write_records(body, db, effective_user_id, agent_id,
-                                effective_scene_id, effective_session_id,
-                                effective_task_id)
-    await db.commit()
-
-    # ============================================================
-    # 根据配置选择处理模式
-    # ============================================================
-
-    # Direct Pipeline
-    conversation_text = body.get_content_text()
-
-    try:
-        pipeline_result = await memory_pipeline.run(
-            text=conversation_text,
-            user_id=effective_user_id,
-            agent_id=agent_id,
-            scene_id=effective_scene_id,
-            session_id=effective_session_id,
-            task_id=body.task_id,
-            source_record_ids=None,
-            extraction_types=["key_fact", "task_state", "preference", "process", "feedback"],
-            task_context=body.metadata,
-            db=db,
-        )
-    except Exception as e:
-        logger.error(f"Pipeline execution failed: {e}")
-        # 明确标记降级：结果为占位 SKIP，不代表真实去重判定
-        return ok(MemoryWriteResponse(
-            results=[
-                WriteResultItem(
-                    id="",
-                    memory=m.content[:80] if hasattr(m, 'content') else "",
-                    event=MemoryEvent.SKIP,
-                )
-                for m in body.messages
-            ],
-            mode="degraded",
-        ).model_dump())
-
-    # --- 将 PipelineResult 映射为前端 results 格式 ---
-    results = _pipeline_to_write_results(pipeline_result)
-
-    elapsed = round((time_module.perf_counter() - start) * 1000, 2)
-    logger.info(
-        f"[Pipeline] 同步写入完成: type={itype}, user_id={effective_user_id}, "
-        f"messages={len(body.messages)}, "
-        f"memories={pipeline_result.new_count + pipeline_result.merged_count}, "
-        f"discarded={pipeline_result.discarded_count}, elapsed={elapsed}ms"
-    )
-
-    return ok(MemoryWriteResponse(results=results, mode="pipeline").model_dump())
-
-
-# ============================================================
-# 写入辅助函数 — 批量 insert
-# ============================================================
-
-async def _batch_write_records(
-    body: MemoryWriteRequest, db, user_id: str, agent_id: str,
-    scene_id: str | None, session_id: str, task_id: str | None = None
-) -> None:
-    """批量写入交互记录（使用单条 INSERT ... VALUES 多条）"""
-    from datetime import datetime, timezone
-    now = datetime.now(timezone.utc)
-    itype = body.interaction_type
-    records = []
-
-    base = {
-        "user_id": user_id,
-        "agent_id": agent_id,
-        "scene_id": scene_id,
-        "session_id": session_id,
-        "task_id": task_id,
-        "interaction_type": itype,
-        "content_type": "text",
-        "processed": False,
-        "status": "pending_extract",
-        "recorded_at": now,
-        "extra_meta": body.metadata or {},
-    }
-
-    extra = dict(body.metadata or {})
-
-    if itype == "dialogue":
-        for i, msg in enumerate(body.messages):
-            records.append({
-                **base,
-                "record_id": f"rec_{uuid4().hex[:24]}",
-                "turn_index": i,
-                "role": msg.role,
-                "content": msg.content,
-            })
-
-    elif itype == "session":
-        if body.session_time:
-            extra["session_time"] = body.session_time
-        if body.session_source:
-            extra["session_source"] = body.session_source
-        base["extra_meta"] = extra
-
-        for i, msg in enumerate(body.messages):
-            records.append({
-                **base,
-                "record_id": f"rec_{uuid4().hex[:24]}",
-                "turn_index": i,
-                "role": msg.role,
-                "content": msg.content,
-            })
-
-        if body.session_summary:
-            records.append({
-                **base,
-                "record_id": f"rec_{uuid4().hex[:24]}",
-                "turn_index": len(body.messages),
-                "role": "session_summary",
-                "content": body.session_summary,
-                "content_type": "session_summary",
-            })
-
-    elif itype == "task_process":
-        base["extra_meta"] = extra
-        for i, msg in enumerate(body.messages):
-            records.append({
-                **base,
-                "record_id": f"rec_{uuid4().hex[:24]}",
-                "turn_index": i,
-                "role": msg.role,
-                "content": msg.content,
-            })
-
-        turn_offset = len(body.messages)
-        task_fields = [
-            ("task_goal", body.task_goal),
-            ("task_progress", body.task_progress),
-            ("task_result", body.task_result),
-        ]
-        for j, (role_name, content) in enumerate(task_fields):
-            if content:
-                records.append({
-                    **base,
-                    "record_id": f"rec_{uuid4().hex[:24]}",
-                    "turn_index": turn_offset + j,
-                    "role": role_name,
-                    "content": content,
-                    "content_type": "task_process",
-                })
-
-    if records:
-        await db.execute(insert(InteractionRecord), records)
-
-
-# ============================================================
-# Pipeline 结果映射
-# ============================================================
-
-def _pipeline_to_write_results(pipeline_result) -> list[WriteResultItem]:
-    """
-    将 PipelineResult.details 转换为前端 WriteResultItem 格式。
-
-    映射规则:
-      keep_new        → ADD      (新记忆创建)
-      merge           → MERGE    (合并到已有)
-      update_existing → UPDATE   (更新已有记忆)
-      discard         → SKIP     (重复或不包含新信息)
-    """
-    results = []
-    for d in pipeline_result.details:
-        action = d.get("action", "keep_new")
-        memory_id = d.get("memory_id", "") or ""
-        content = d.get("content_preview", "") or ""
-
-        if action == "discard":
-            results.append(WriteResultItem(
-                id="",
-                memory=content,
-                event=MemoryEvent.SKIP,
-            ))
-        elif action == "merge":
-            results.append(WriteResultItem(
-                id=memory_id,
-                memory=content,
-                event=MemoryEvent.MERGE,
-            ))
-        elif action == "update_existing":
-            results.append(WriteResultItem(
-                id=memory_id,
-                memory=content,
-                event=MemoryEvent.UPDATE,
-            ))
-        else:  # keep_new
-            results.append(WriteResultItem(
-                id=memory_id,
-                memory=content,
-                event=MemoryEvent.ADD,
-            ))
-
-    return results
-
-
-# ============================================================
-# 异步写入 — 对齐前端对接文档 一.1 附节
-# ============================================================
-
-@router.post("/async_write", summary="异步写入记忆", status_code=202)
-async def memory_async_write(
-    body: AsyncWriteRequest,
-    request: Request,
-    agent_id: str = Depends(get_current_agent),
-    user_id_header: str = Depends(get_current_user_id),
-):
-    """
-    异步写入 — 即刻返回 request_id，后台处理。
-
-    处理管线:
-      1. 鉴权（开发阶段跳过）
-      2. 投递到 Kafka MQ
-      3. Consumer 异步处理 → 落库
-      4. 失败时降级为同步写入（status=pending_extract）
-    """
-    request_id = f"async_{uuid4().hex[:24]}"
-    effective_user_id = normalize_id(user_id_header or body.user_id)
+    # --- 预生成 record_id（幂等键），投递 Kafka（带全量 + record_ids）---
     body_dict = body.model_dump()
+    body_dict["user_id"] = effective_user_id
+    body_dict["agent_id"] = agent_id
+    body_dict["scene_id"] = effective_scene_id
+    body_dict["session_id"] = effective_session_id
+    body_dict["task_id"] = effective_task_id
+    record_ids = gen_record_ids(count_l0_records(body_dict))
+    body_dict["record_ids"] = record_ids
 
-    mq_ok = await _try_deliver_to_mq(request_id, effective_user_id, agent_id, body_dict)
-
-    if mq_ok:
-        logger.info(f"异步写入已投递 MQ: request_id={request_id}")
-    else:
-        logger.warning(f"MQ 不可用，降级同步写入: request_id={request_id}")
-        await _fallback_sync_write(request_id, effective_user_id, agent_id, body)
-
-    return ok(AsyncWriteResponse(
+    from app.services.mq_producer import mq_producer
+    request_id = f"req_{uuid4().hex[:16]}"
+    published = await mq_producer.publish_memory_write(
         request_id=request_id,
-        status="accepted",
-    ).model_dump())
-
-
-async def _try_deliver_to_mq(
-    request_id: str, user_id: str, agent_id: str, body_dict: dict
-) -> bool:
-    """尝试投递到 Kafka MQ。返回 True 投递成功，False 失败。"""
-    if not mq_producer.is_available:
-        logger.debug("MQ Producer 未初始化，跳过投递")
-        return False
-
-    return await mq_producer.publish_memory_write(
-        request_id=request_id,
-        user_id=user_id,
+        user_id=effective_user_id,
         agent_id=agent_id,
         body_dict=body_dict,
     )
 
+    if published:
+        elapsed = round((time_module.perf_counter() - start) * 1000, 2)
+        logger.info(
+            f"[Write] Kafka 投递成功: type={itype}, user_id={effective_user_id}, "
+            f"session_id={effective_session_id}, l0_count={len(record_ids)}, elapsed={elapsed}ms"
+        )
+        return ok({
+            "accepted": True,
+            "session_id": effective_session_id,
+            "l0_count": len(record_ids),
+            "record_ids": record_ids,
+        })
 
-async def _fallback_sync_write(
-    request_id: str, user_id: str, agent_id: str, body: AsyncWriteRequest
-) -> None:
-    """MQ 不可用时降级为同步写入原始记录（status=pending_extract，后续可补处理）"""
-    from app.core.database import async_session_factory
-    from datetime import datetime, timezone
-
-    now = datetime.now(timezone.utc)
-    itype = body.interaction_type
-    extra_meta = dict(body.metadata or {})
-
-    if itype == "session":
-        if body.session_time:
-            extra_meta["session_time"] = body.session_time
-        if body.session_source:
-            extra_meta["session_source"] = body.session_source
-
-    records = []
-    base = {
-        "user_id": user_id,
-        "agent_id": agent_id,
-        "scene_id": body.scene_id,
-        "session_id": body.session_id,
-        "task_id": body.task_id,
-        "interaction_type": itype,
-        "content_type": "text",
-        "processed": False,
-        "status": "pending_extract",
-        "recorded_at": now,
-        "extra_meta": extra_meta,
-    }
-
-    async with async_session_factory() as session:
-        for i, msg in enumerate(body.messages):
-            records.append({
-                **base,
-                "record_id": f"rec_{uuid4().hex[:24]}",
-                "turn_index": i,
-                "role": msg.role,
-                "content": msg.content,
-            })
-
-        if itype == "session" and body.session_summary:
-            records.append({
-                **base,
-                "record_id": f"rec_{uuid4().hex[:24]}",
-                "turn_index": len(body.messages),
-                "role": "session_summary",
-                "content": body.session_summary,
-                "content_type": "session_summary",
-            })
-
-        if itype == "task_process":
-            turn_offset = len(body.messages)
-            task_fields = [
-                ("task_goal", body.task_goal),
-                ("task_progress", body.task_progress),
-                ("task_result", body.task_result),
-            ]
-            for j, (role_name, content) in enumerate(task_fields):
-                if content:
-                    records.append({
-                        **base,
-                        "record_id": f"rec_{uuid4().hex[:24]}",
-                        "turn_index": turn_offset + j,
-                        "role": role_name,
-                        "content": content,
-                        "content_type": "task_process",
-                    })
-
-        if records:
-            await session.execute(insert(InteractionRecord), records)
-        await session.commit()
-
-    logger.info(
-        f"降级同步写入完成: request_id={request_id}, "
-        f"records={len(records)}, status=pending_extract"
+    # 降级：Kafka 不可用 → 同步落 L0（pending_extract，供 L1 worker 轮询兜底）
+    records = build_l0_records(
+        body_dict,
+        user_id=effective_user_id,
+        agent_id=agent_id,
+        scene_id=effective_scene_id,
+        session_id=effective_session_id,
+        task_id=effective_task_id,
+        record_ids=record_ids,
     )
+    await persist_l0(db, records)
+    await db.commit()
+
+    elapsed = round((time_module.perf_counter() - start) * 1000, 2)
+    logger.warning(
+        f"[Write] Kafka 不可用，降级同步落 L0: type={itype}, user_id={effective_user_id}, "
+        f"session_id={effective_session_id}, l0_count={len(record_ids)}, elapsed={elapsed}ms"
+    )
+    return ok({
+        "accepted": True,
+        "session_id": effective_session_id,
+        "l0_count": len(record_ids),
+        "record_ids": record_ids,
+        "degraded": True,
+    })
 
 
 # ============================================================
@@ -561,16 +277,16 @@ async def memory_search(
         filters["created_at"] = time_filter
 
     try:
-        # ── 主路径: Qdrant 向量检索 → T_MEMORY_VECTOR 桥接 → T_MEMORY ──
-        from app.core.qdrant_client import qdrant_client as _qd
+        # ── 主路径: 向量检索（vector_store 抽象，无桥接表）→ T_MEMORY ──
+        from app.services.vector_store import vector_store
         from app.services.embedding_client import embedding_client as _emb
-        from app.models.base import MemoryVector, Memory
+        from app.models.base import Memory
         import math as _math
 
         # Step 1: 向量化 query
         query_vector = await _emb.embed_single(body.query)
 
-        # Step 2: Qdrant 向量检索 + payload 预过滤
+        # Step 2: 向量检索 + payload 预过滤
         payload_filters = {}
         if body.scene_id:
             payload_filters["scene_id"] = body.scene_id
@@ -579,31 +295,22 @@ async def memory_search(
         if body.session_id:
             payload_filters["session_id"] = body.session_id
 
-        hits = _qd.search_similar(
+        hits = await vector_store.hybrid_search(
             query_vector=query_vector,
+            query_text=body.query,
             user_id=body.user_id,
             top_k=max(body.top_k * 3, 30),
-            payload_filters=payload_filters if payload_filters else None,
+            filters=payload_filters if payload_filters else None,
         )
 
         if not hits:
             return ok({"query": body.query, "results": [], "total_candidates": 0, "elapsed_ms": 0})
 
-        # Step 3: T_MEMORY_VECTOR 桥接 → memory_id + score
+        # memory_id → qdrant_score（vector_store 已返回 memory_id，无需桥接表）
+        id_map = {h["memory_id"]: h["score"] for h in hits}
+
+        # Step 3: T_MEMORY 取权威数据 + 后过滤
         from sqlalchemy import select as _sel
-        # 构建 Qdrant point_id → score 映射（normalize UUID 格式）
-        point_scores = {str(h["id"]): float(h["score"]) if h["score"] is not None else 0.0 for h in hits}
-        mv_result = await db.execute(
-            _sel(MemoryVector).where(MemoryVector.vector_store_id.in_(list(point_scores.keys())))
-        )
-        id_map = {}      # memory_id → qdrant_score
-        for mv in mv_result.scalars().all():
-            id_map[mv.memory_id] = point_scores.get(mv.vector_store_id, 0.0)
-
-        if not id_map:
-            return ok({"query": body.query, "results": [], "total_candidates": len(hits), "elapsed_ms": 0})
-
-        # Step 4: T_MEMORY 取权威数据 + 后过滤
         mem_query = _sel(Memory).where(Memory.memory_id.in_(list(id_map.keys())))
         if body.memory_types:
             mem_query = mem_query.where(Memory.memory_type.in_(body.memory_types))
@@ -611,6 +318,10 @@ async def memory_search(
             mem_query = mem_query.where(Memory.status.in_(body.status))
         else:
             mem_query = mem_query.where(Memory.status == "active")
+        # 状态类记忆（process/correction）是 agent 私有，额外按 agent_id 过滤；普通记忆跨 agent 共享
+        mem_query = mem_query.where(
+            Memory.memory_type.notin_(["process", "correction"]) | (Memory.agent_id == agent_id)
+        )
 
         mem_result = await db.execute(mem_query)
         db_memories = {m.memory_id: m for m in mem_result.scalars().all()}
@@ -671,7 +382,6 @@ async def memory_search(
             "query": body.query,
             "results": results,
             "total_candidates": total_candidates,
-            "elapsed_ms": elapsed_ms,
             "elapsed_ms": elapsed_ms,
         }
 
@@ -741,27 +451,6 @@ async def memory_search(
 
 
 # ============================================================
-# 层级统计 — 通用记忆建模与多层记忆管理
-# ============================================================
-
-@router.get("/stats", summary="层级记忆统计")
-async def memory_stats(
-    user_id: str = Query(...),
-    scene_id: str | None = Query(None),
-    db: AsyncSession = Depends(get_db),
-    _agent: str = Depends(get_current_agent),
-):
-    """按 user/session/task/agent 四级统计。利用现有字段推断，不需要新增列。"""
-    from app.services.memory_service import get_memory_stats as _stats
-    from datetime import datetime as _dt, timezone as _tz
-
-    result = await _stats(db, user_id=user_id, scene_id=scene_id)
-    result["generated_at"] = _dt.now(_tz.utc).isoformat()
-    result["classification_version"] = "memory_scope_v1"
-    return ok(result)
-
-
-# ============================================================
 # 上下文 — 对齐前端对接文档 二.1 节
 # ============================================================
 
@@ -787,9 +476,9 @@ async def memory_context(
 ):
     """Prompt context: search -> group by type -> assemble within capacity budget."""
     try:
-        from app.core.qdrant_client import qdrant_client as _qd
+        from app.services.vector_store import vector_store
         from app.services.embedding_client import embedding_client as _emb
-        from app.models.base import MemoryVector, Memory
+        from app.models.base import Memory
         from sqlalchemy import select as _sel
         import math as _math
 
@@ -804,25 +493,18 @@ async def memory_context(
             payload_filters["session_id"] = body.session_id
 
         top_k = body.top_k or 10
-        hits = _qd.search_similar(
+        hits = await vector_store.hybrid_search(
             query_vector=query_vector,
+            query_text=body.query,
             user_id=body.user_id,
             top_k=max(top_k * 3, 30),
-            payload_filters=payload_filters if payload_filters else None,
+            filters=payload_filters if payload_filters else None,
         )
         if not hits:
             return ok({"formatted_text": "", "memory_count": 0, "estimated_tokens": 0})
 
-        # Step 2: T_MEMORY_VECTOR bridge -> T_MEMORY
-        point_scores = {str(h["id"]): float(h["score"]) if h["score"] is not None else 0.0 for h in hits}
-        mv_result = await db.execute(
-            _sel(MemoryVector).where(MemoryVector.vector_store_id.in_(list(point_scores.keys())))
-        )
-        id_map = {}
-        for mv in mv_result.scalars().all():
-            id_map[mv.memory_id] = point_scores.get(mv.vector_store_id, 0.0)
-        if not id_map:
-            return ok({"formatted_text": "", "memory_count": 0, "estimated_tokens": 0})
+        # memory_id → score（无桥接表，hybrid 已融合 dense + sparse）
+        id_map = {h["memory_id"]: h["score"] for h in hits}
 
         mem_query = _sel(Memory).where(Memory.memory_id.in_(list(id_map.keys())))
         if body.memory_types:
@@ -831,6 +513,10 @@ async def memory_context(
             mem_query = mem_query.where(Memory.status.in_(body.status))
         else:
             mem_query = mem_query.where(Memory.status == "active")
+        # 状态类记忆（process/correction）是 agent 私有，额外按 agent_id 过滤；普通记忆跨 agent 共享
+        mem_query = mem_query.where(
+            Memory.memory_type.notin_(["process", "correction"]) | (Memory.agent_id == agent_id)
+        )
         mem_result = await db.execute(mem_query)
         db_memories = {m.memory_id: m for m in mem_result.scalars().all()}
 
@@ -859,6 +545,7 @@ async def memory_context(
             if final_score < SCORE_MIN_THRESHOLD:
                 continue
             scored.append({
+                "memory_id": mem.memory_id,
                 "content": mem.content or "",
                 "summary": mem.summary or "",
                 "memory_type": mem.memory_type or "fact",
@@ -869,16 +556,20 @@ async def memory_context(
 
         # Step 4: Group by type + sort
         scored.sort(key=lambda x: x["relevance_score"], reverse=True)
-        groups = {}
-        for item in scored:
-            mt = item["memory_type"]
-            if mt == "correction":
-                continue
-            groups.setdefault(mt, []).append(item)
-        sorted_types = sorted(
-            [t for t in groups if t in TYPE_PRIORITY],
-            key=lambda t: TYPE_PRIORITY[t],
-        )
+        scored = [item for item in scored if item["memory_type"] != "correction"]
+
+        if body.group_by_type:
+            groups = {}
+            for item in scored:
+                groups.setdefault(item["memory_type"], []).append(item)
+            sorted_types = sorted(
+                [t for t in groups if t in TYPE_PRIORITY],
+                key=lambda t: TYPE_PRIORITY[t],
+            )
+        else:
+            # 平铺：不按类型分组，直接按相关性排序
+            groups = {"_flat": scored}
+            sorted_types = ["_flat"]
 
         # Step 5: Assemble within budget
         max_tokens = body.max_tokens or 3000
@@ -888,9 +579,10 @@ async def memory_context(
         for mt in sorted_types:
             if memory_count >= MAX_MEMORY_COUNT:
                 break
-            title = GROUP_TITLES.get(mt, f"## {mt}")
-            lines.append(title)
-            token_estimate += len(title) // 2
+            if mt != "_flat":
+                title = GROUP_TITLES.get(mt, f"## {mt}")
+                lines.append(title)
+                token_estimate += len(title) // 2
             for item in groups[mt]:
                 if memory_count >= MAX_MEMORY_COUNT:
                     break
@@ -908,7 +600,28 @@ async def memory_context(
                 break
 
         formatted_text = "\n".join(lines) if lines else ""
-        return ok({"formatted_text": formatted_text, "memory_count": memory_count, "estimated_tokens": token_estimate})
+
+        # 设置 context_snapshot（供 dashboard latest_context 使用，非空才记录）
+        if formatted_text:
+            request.state.context_snapshot = {
+                "version": 1,
+                "formatted_text": formatted_text,
+                "memory_count": memory_count,
+                "query": body.query,
+                "user_id": body.user_id,
+                "scene_id": body.scene_id,
+                "session_id": body.session_id,
+                "task_id": body.task_id,
+                "agent_id": agent_id,
+                "generated_at": datetime.now(timezone.utc).isoformat(),
+            }
+
+        return ok({
+            "formatted_text": formatted_text,
+            "memory_count": memory_count,
+            "estimated_tokens": token_estimate,
+            "fragments": scored,
+        })
 
     except Exception as e:
         logger.error(f"Context generation failed: {e}")
@@ -924,6 +637,7 @@ async def memory_context(
 async def memory_update(
     body: MemoryUpdateRequest,
     db: AsyncSession = Depends(get_db),
+    _agent: str = Depends(get_current_agent),
 ):
     """更新单条记忆的内容、重要性、标签等字段。"""
     result = await memory_store.update_memory(
@@ -958,6 +672,7 @@ async def memory_update(
 async def memory_delete(
     body: MemoryDeleteRequest,
     db: AsyncSession = Depends(get_db),
+    _agent: str = Depends(get_current_agent),
 ):
     """软删除单条记忆（状态置为 deleted，从 Qdrant 移除向量）。"""
     result = await memory_store.soft_delete(
@@ -986,6 +701,7 @@ async def memory_list(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
+    _agent: str = Depends(get_current_agent),
 ):
     """
     分页列出用户全部记忆。
@@ -1032,6 +748,7 @@ async def memory_delete_all(
     user_id: str = Query(...),
     scene_id: str | None = Query(None),
     db: AsyncSession = Depends(get_db),
+    _agent: str = Depends(get_current_agent),
 ):
     """
     清除用户全部记忆 — PostgreSQL + Qdrant 双清。
@@ -1160,69 +877,26 @@ async def memory_profile(
     db: AsyncSession = Depends(get_db),
     agent_id: str = Depends(get_current_agent),
 ):
-    """聚合用户全部 preference + fact 记忆，LLM 生成结构化画像 + 文本总结。"""
+    """返回该 user 在该 scene 的 L3 画像（persona 自由文本），消费 L2 场景块（硬隔离）。"""
     try:
         from sqlalchemy import select as _sel
-        from app.models.base import Memory
-        from app.services.llm_client import llm_client as _llm
-        import json as _json
+        from app.models.base import Agent
+        from app.services.l3_persona import generate_persona
 
-        mem_result = await db.execute(
-            _sel(Memory).where(
-                Memory.user_id == body.user_id,
-                Memory.memory_type.in_(["preference", "fact"]),
-                Memory.status == "active",
-            ).order_by(Memory.importance.desc()).limit(body.max_memories)
-        )
-        memories = list(mem_result.scalars().all())
+        # 方案 A：从 agent 推导 scene_id（硬隔离）
+        agent_result = await db.execute(_sel(Agent).where(Agent.agent_id == agent_id))
+        agent = agent_result.scalar_one_or_none()
+        scene_id = agent.scene_id if agent else None
+        if not scene_id:
+            return error(message="当前 agent 未绑定场景", code=-1, error_code="SCENE_REQUIRED")
 
-        if not memories:
-            return ok({
-                "profile": {},
-                "summary": "",
-                "memory_count": 0,
-            })
-
-        pref_lines = "\n".join(
-            f"- {m.content}" for m in memories if m.memory_type == "preference"
-        )
-        fact_lines = "\n".join(
-            f"- {m.content}" for m in memories if m.memory_type == "fact"
-        )
-
-        prompt = (
-            "根据以下用户偏好和事实记忆生成用户画像。返回JSON，包含以下字段："
-            "preferences(偏好列表), business_focus(业务关注方向), "
-            "communication_style(沟通风格), decision_habits(决策习惯), "
-            "project_background(项目背景), personalization(个性化要求), "
-            "summary(200字内的文本总结)。"
-            f"\n\n## 用户偏好\n{pref_lines}\n\n## 关键事实\n{fact_lines}"
-        )
-
-        report = await _llm.chat_completion([{
-            "role": "user",
-            "content": prompt,
-        }], max_tokens=800)
-
-        try:
-            profile_data = _json.loads(report)
-        except Exception:
-            profile_data = {"summary": report}
-
-        summary_text = profile_data.pop("summary", report) if isinstance(profile_data, dict) else report
-        profile = {k: v for k, v in profile_data.items()} if isinstance(profile_data, dict) else {}
-
+        result = await generate_persona(db, body.user_id, scene_id)
         return ok({
-            "profile": profile,
-            "summary": summary_text,
-            "memory_count": len(memories),
+            "persona": result.get("content", ""),
+            "scene_id": scene_id,
+            "changed_scenes": result.get("changed_scenes", 0),
         })
     except Exception as e:
-        logger.error(f"Profile generation failed: {e}")
-        return error(
-            message="画像生成失败",
-            code=-2,
-            data={"profile": {}, "summary": "", "memory_count": 0},
-            error_code="PROFILE_FAILED",
-        )
+        logger.error(f"Profile failed: {e}")
+        return error(message="画像生成失败", code=-2, error_code="PROFILE_FAILED")
 

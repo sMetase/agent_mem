@@ -167,19 +167,18 @@ class MemoryStore:
         qdrant_scores: dict[str, float] = {}
         if self.qdrant.is_available:
             try:
-                hits = self.qdrant.search_similar(
+                from app.services.vector_store import vector_store
+                hits = await vector_store.search(
                     query_vector=query_vec,
                     user_id=user_id,
                     top_k=top_k * 3,
                     score_threshold=0.50,
                 )
                 for h in hits:
-                    mem_id = h["payload"].get("memory_id", "")
-                    if mem_id:
-                        candidate_ids.add(mem_id)
-                        qdrant_scores[mem_id] = h["score"]
+                    candidate_ids.add(h["memory_id"])
+                    qdrant_scores[h["memory_id"]] = h["score"]
             except Exception as e:
-                logger.warning(f"Qdrant search failed: {e}")
+                logger.warning(f"vector search failed: {e}")
 
         # Step 3: PostgreSQL query with metadata filters
         stmt = select(Memory).where(Memory.user_id == user_id)
@@ -522,11 +521,10 @@ class MemoryStore:
         deleted_count = len(memory_ids)
         logger.info(f"Deleting {deleted_count} memories for user={user_id}")
 
-        # 清理关联表（历史快照 / 向量桥接 / 关系边）
-        from app.models.base import MemoryHistory, MemoryVector, MemoryRelation
+        # 清理关联表（历史快照 / 关系边）
+        from app.models.base import MemoryHistory, MemoryRelation
         if memory_ids:
             await db.execute(delete(MemoryHistory).where(MemoryHistory.memory_id.in_(memory_ids)))
-            await db.execute(delete(MemoryVector).where(MemoryVector.memory_id.in_(memory_ids)))
             await db.execute(delete(MemoryRelation).where(MemoryRelation.source_memory_id.in_(memory_ids)))
             await db.execute(delete(MemoryRelation).where(MemoryRelation.target_memory_id.in_(memory_ids)))
 

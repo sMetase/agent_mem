@@ -20,7 +20,7 @@ from app.api.deps import get_current_agent, get_current_user_id
 from app.core.database import get_db
 from app.core.logger import get_logger
 from app.core.security import generate_session_id
-from app.models.base import Session, Memory, MemoryVector
+from app.models.base import Session, Memory
 from app.schemas.common import ok
 from app.schemas.session import SessionCreateRequest, SessionUpdateRequest
 
@@ -245,24 +245,13 @@ async def session_close(
             .values(status="expired")
         )
 
-        # 删除 T_MEMORY_VECTOR + Qdrant 向量
+        # 删除过期向量（vector_store 抽象，无桥接表）
         try:
-            from app.models.base import MemoryVector as _MV
-            mv_result = await db.execute(
-                select(_MV).where(_MV.memory_id.in_(compress_ids))
-            )
-            expired_mvs = list(mv_result.scalars().all())
-            if expired_mvs:
-                qdrant_ids = [mv.vector_store_id for mv in expired_mvs]
-                for mv in expired_mvs:
-                    await db.delete(mv)
-                try:
-                    from app.core.qdrant_client import qdrant_client as _qd
-                    _qd.delete_vectors(qdrant_ids)
-                except Exception as e:
-                    logger.warning(f"Qdrant 删除过期向量失败: {e}")
+            from app.services.vector_store import vector_store
+            for mid in compress_ids:
+                await vector_store.delete(mid)
         except Exception as e:
-            logger.warning(f"T_MEMORY_VECTOR 清理失败: {e}")
+            logger.warning(f"删除过期向量失败: {e}")
 
     # ── Step 5: 新摘要入库 ──
     if summary_text:
@@ -292,29 +281,22 @@ async def session_close(
         db.add(new_memory)
         await db.flush()
 
-        # 向量化 + Qdrant + T_MEMORY_VECTOR
+        # 向量化 + 写入（vector_store 抽象，无桥接表）
         try:
-            from app.core.qdrant_client import qdrant_client as _qd, _str_to_uuid
+            from app.services.vector_store import vector_store
             from app.services.embedding_client import embedding_client as _emb
             vector = await _emb.embed_single(summary_text)
-            point_id = f"pt_{_uuid.uuid4().hex[:16]}"
-            qdrant_id = _str_to_uuid(point_id)
-            _qd.upsert_single(
-                point_id=point_id,
+            await vector_store.insert(
+                memory_id=new_memory_id,
                 vector=vector,
-                payload={
+                metadata={
                     "user_id": session.user_id,
                     "scene_id": session.scene_id or "",
                     "task_id": session.task_id or "",
                     "session_id": sid,
                 },
+                content=summary_text,
             )
-            mv = MemoryVector(
-                memory_id=new_memory_id,
-                vector_store_id=qdrant_id,
-                dimension=1024,
-            )
-            db.add(mv)
         except Exception as e:
             logger.warning(f"新摘要向量化写入失败: {e}")
 

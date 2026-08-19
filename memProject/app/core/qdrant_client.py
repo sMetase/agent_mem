@@ -13,7 +13,10 @@ from qdrant_client.models import (
     FieldCondition,
     Filter,
     MatchValue,
+    Modifier,
     PointStruct,
+    SparseVector,
+    SparseVectorParams,
     VectorParams,
 )
 
@@ -31,7 +34,7 @@ QDRANT_HOST = "localhost"
 QDRANT_GRPC_PORT = 6333
 COLLECTION_NAME = "agent_mem_generation"  # 独立 collection，不影响 mem0 的 openmemory
 VECTOR_DIM = 1024  # bge-m3 维度
-DEFAULT_SCORE_THRESHOLD = 0.7
+DEFAULT_SCORE_THRESHOLD = 0.5
 
 
 class QdrantClientSingleton:
@@ -44,7 +47,7 @@ class QdrantClientSingleton:
     def initialize(self) -> bool:
         """初始化 Qdrant gRPC 连接并确保 collection 存在。"""
         try:
-            self._client = QdrantClient(host=QDRANT_HOST, port=QDRANT_GRPC_PORT, prefer_grpc=False)
+            self._client = QdrantClient(host=QDRANT_HOST, port=QDRANT_GRPC_PORT, prefer_grpc=False, timeout=10)
 
             # 确保 collection 存在
             collections = self._client.get_collections()
@@ -54,8 +57,9 @@ class QdrantClientSingleton:
                 self._client.create_collection(
                     collection_name=self._collection_name,
                     vectors_config=VectorParams(size=VECTOR_DIM, distance=Distance.COSINE),
+                    sparse_vectors_config={"keyword": SparseVectorParams(modifier=Modifier.IDF)},
                 )
-                logger.info(f"Qdrant collection '{self._collection_name}' created (dim={VECTOR_DIM})")
+                logger.info(f"Qdrant collection '{self._collection_name}' created (dim={VECTOR_DIM}, sparse=keyword/IDF)")
             else:
                 # 验证维度
                 info = self._client.get_collection(self._collection_name)
@@ -69,6 +73,7 @@ class QdrantClientSingleton:
                     self._client.create_collection(
                         collection_name=self._collection_name,
                         vectors_config=VectorParams(size=VECTOR_DIM, distance=Distance.COSINE),
+                        sparse_vectors_config={"keyword": SparseVectorParams(modifier=Modifier.IDF)},
                     )
 
             logger.info(f"Qdrant client initialized: {QDRANT_HOST}:{QDRANT_GRPC_PORT}, collection='{self._collection_name}'")
@@ -166,28 +171,90 @@ class QdrantClientSingleton:
             logger.error(f"Qdrant search failed: {e}")
             raise VectorStoreError(f"Qdrant 检索失败: {str(e)}")
 
+    def search_keyword(
+        self,
+        query_text: str,
+        user_id: str,
+        top_k: int = 5,
+        payload_filters: dict | None = None,
+    ) -> list[dict]:
+        """
+        关键词检索（sparse vector，jieba 分词 + 词频，Qdrant IDF modifier 自动加权）。
+
+        Returns:
+            [{"id": str, "score": float, "payload": dict}, ...]
+        """
+        from app.services.sparse_encoder import text_to_sparse
+
+        sparse = text_to_sparse(query_text)
+        if not sparse:
+            return []
+
+        sparse_vector = SparseVector(indices=list(sparse.keys()), values=list(sparse.values()))
+
+        try:
+            must_conditions = [
+                FieldCondition(key="user_id", match=MatchValue(value=user_id))
+            ]
+            if payload_filters:
+                for key, value in payload_filters.items():
+                    if value:
+                        must_conditions.append(
+                            FieldCondition(key=key, match=MatchValue(value=value))
+                        )
+
+            hits = self.client.query_points(
+                collection_name=self._collection_name,
+                query=sparse_vector,
+                using="keyword",
+                query_filter=Filter(must=must_conditions),
+                limit=top_k,
+            )
+
+            results = [
+                {
+                    "id": str(hit.id),
+                    "score": float(hit.score) if hit.score is not None else 0.0,
+                    "payload": hit.payload or {},
+                }
+                for hit in hits.points
+            ]
+            logger.info(f"Qdrant keyword search: user={user_id}, top_k={top_k}, found={len(results)}")
+            return results
+        except Exception as e:
+            logger.error(f"Qdrant keyword search failed: {e}")
+            raise VectorStoreError(f"Qdrant 关键词检索失败: {str(e)}")
+
     def upsert_vectors(
         self,
         vectors: list[list[float]],
         payloads: list[dict],
         ids: list[str],
+        sparse_vectors: list[dict] | None = None,
     ) -> None:
         """
-        批量写入/更新向量。
+        批量写入/更新向量（dense + 可选 sparse）。
 
         Args:
-            vectors: 向量列表
+            vectors: 向量列表（dense）
             payloads: 每个向量的 payload（含 user_id, memory_id 等）
             ids: 每个向量的唯一标识（使用 memory_id）
+            sparse_vectors: 可选稀疏向量列表（{词ID: 词频}，用于关键词检索）
         """
         if len(vectors) != len(payloads) or len(vectors) != len(ids):
             raise ValueError("vectors, payloads, ids 长度必须一致")
 
         try:
-            points = [
-                PointStruct(id=_str_to_uuid(ids[i]), vector=vectors[i], payload=payloads[i])
-                for i in range(len(ids))
-            ]
+            points = []
+            for i in range(len(ids)):
+                named = {"": vectors[i]}
+                if sparse_vectors and i < len(sparse_vectors) and sparse_vectors[i]:
+                    sv = sparse_vectors[i]
+                    named["keyword"] = SparseVector(
+                        indices=list(sv.keys()),
+                        values=list(sv.values()),
+                    )
+                points.append(PointStruct(id=_str_to_uuid(ids[i]), vector=named, payload=payloads[i]))
             self.client.upsert(
                 collection_name=self._collection_name,
                 points=points,

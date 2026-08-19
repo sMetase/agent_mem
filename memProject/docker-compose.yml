@@ -1,8 +1,14 @@
 # ============================================================
 # 智能体记忆系统 — 开发环境（按需启动）
 #
-#   docker compose up -d                  # PG + Qdrant
+#   docker compose up -d                  # PG + Qdrant + Kafka + Kafka UI
 #   docker compose --profile gpu up -d    # + Ollama
+#
+# 服务端口：
+#   PostgreSQL   5433（宿主机）-> 5432（容器）
+#   Qdrant       6333 / 6334
+#   Kafka        9092（宿主机应用连接，EXTERNAL）
+#   Kafka UI     8080（Web 管理界面，默认无登录）
 # ============================================================
 
 services:
@@ -10,9 +16,9 @@ services:
     platform: linux/amd64
     image: pgvector/pgvector:pg16
     environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: mem_db
+      POSTGRES_USER: memuser
+      POSTGRES_PASSWORD: mempassword
+      POSTGRES_DB: agent_memory
     ports:
       - "5433:5432"
     volumes:
@@ -27,6 +33,43 @@ services:
     volumes:
       - qdrant_data:/qdrant/storage
 
+  # Kafka（KRaft 单节点，无需 Zookeeper）
+  kafka:
+    platform: linux/amd64
+    image: bitnami/kafka:3.7
+    ports:
+      - "9092:9092"   # EXTERNAL：宿主机应用连接（KAFKA_BOOTSTRAP_SERVERS=localhost:9092）
+      - "9093:9093"   # INTERNAL：docker 网络内 Kafka UI 连接
+    environment:
+      - KAFKA_CFG_NODE_ID=0
+      - KAFKA_CFG_PROCESS_ROLES=controller,broker
+      - KAFKA_CFG_CONTROLLER_QUORUM_VOTERS=0@kafka:9094
+      - KAFKA_CFG_LISTENERS=EXTERNAL://:9092,INTERNAL://:9093,CONTROLLER://:9094
+      - KAFKA_CFG_ADVERTISED_LISTENERS=EXTERNAL://localhost:9092,INTERNAL://kafka:9093
+      - KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP=CONTROLLER:PLAINTEXT,EXTERNAL:PLAINTEXT,INTERNAL:PLAINTEXT
+      - KAFKA_CFG_CONTROLLER_LISTENER_NAMES=CONTROLLER
+      - KAFKA_CFG_INTER_BROKER_LISTENER_NAME=INTERNAL
+      - KAFKA_CFG_AUTO_CREATE_TOPICS_ENABLE=true
+      - KAFKA_CFG_OFFSETS_TOPIC_REPLICATION_FACTOR=1
+      - KAFKA_CFG_TRANSACTION_STATE_LOG_REPLICATION_FACTOR=1
+      - KAFKA_CFG_TRANSACTION_STATE_LOG_MIN_ISR=1
+      - KAFKA_CFG_LOG_RETENTION_HOURS=72
+    volumes:
+      - kafka_data:/bitnami/kafka
+
+  # Kafka UI（Web 管理界面）
+  kafka-ui:
+    platform: linux/amd64
+    image: provectuslabs/kafka-ui:latest
+    ports:
+      - "8080:8080"
+    environment:
+      - KAFKA_CLUSTERS_0_NAME=local
+      - KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS=kafka:9093
+    depends_on:
+      - kafka
+
 volumes:
   pgdata:
   qdrant_data:
+  kafka_data:

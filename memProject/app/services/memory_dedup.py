@@ -247,8 +247,9 @@ class DedupService:
     ) -> list[dict]:
         """为单个候选记忆查找相似记忆，返回 [{memory_id, content, memory_type, vector_score, memory}]"""
         try:
+            from app.services.vector_store import vector_store
             query_vector = await self._embedding.embed_single(candidate.content)
-            hits = self._qdrant.search_similar(
+            hits = await vector_store.search(
                 query_vector=query_vector, user_id=user_id,
                 top_k=_SIMILAR_TOP_K, score_threshold=similarity_threshold,
             )
@@ -258,16 +259,8 @@ class DedupService:
         if not hits:
             return []
 
-        from app.models.base import MemoryVector
-        point_scores = {str(h["id"]): h["score"] for h in hits}
-        mv_result = await db.execute(
-            select(MemoryVector).where(MemoryVector.vector_store_id.in_(list(point_scores.keys())))
-        )
-        vid_to_mid = {mv.vector_store_id: mv.memory_id for mv in mv_result.scalars().all()}
-        if not vid_to_mid:
-            return []
-
-        mid_scores = {vid_to_mid[vid]: point_scores[vid] for vid in vid_to_mid if vid in point_scores}
+        # vector_store 已返回 memory_id，无需桥接表
+        mid_scores = {h["memory_id"]: h["score"] for h in hits}
         mem_result = await db.execute(
             select(Memory).where(
                 Memory.memory_id.in_(list(mid_scores.keys())),

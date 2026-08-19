@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 
 from sqlalchemy import (
     Column, String, Text, Integer, Float, Boolean,
-    DateTime, BigInteger, JSON, Index,
+    DateTime, BigInteger, JSON, Index, text,
 )
 from sqlalchemy.dialects.postgresql import UUID, ARRAY
 from sqlalchemy.orm import relationship
@@ -32,6 +32,8 @@ class User(Base):
 
     id = Column(String(32), primary_key=True, default=_gen_uuid)
     user_id = Column(String(128), unique=True, nullable=False, index=True)
+    username = Column(String(128), unique=True, nullable=True, index=True)
+    password_hash = Column(String(256), nullable=True)
     name = Column(String(256), nullable=True)
     extra_meta = Column(JSON, default=dict)
     created_at = Column(DateTime(timezone=True), default=_now)
@@ -158,6 +160,7 @@ class Memory(Base):
 
     id = Column(String(32), primary_key=True, default=_gen_uuid)
     memory_id = Column(String(64), unique=True, nullable=False, index=True)
+    seq_id = Column(BigInteger, nullable=False, server_default=text("nextval('t_memory_seq_id_seq')"), index=True)  # 单调自增，L2 增量游标用
     user_id = Column(String(128), nullable=False, index=True)
     agent_id = Column(String(128), nullable=True, index=True)
     scene_id = Column(String(128), nullable=True, index=True)
@@ -188,8 +191,6 @@ class Memory(Base):
 
     source_type = Column(String(32), default="extracted")
     source_record_ids = Column(JSON, default=list)
-
-    vector_id = Column(String(64), nullable=True, index=True)
 
     created_at = Column(DateTime(timezone=True), default=_now)
     updated_at = Column(DateTime(timezone=True), default=_now, onupdate=_now)
@@ -233,25 +234,7 @@ class MemoryHistory(Base):
 
 
 # ============================================================
-# 8. T_MEMORY_VECTOR
-# ============================================================
-class MemoryVector(Base):
-    __tablename__ = "t_memory_vector"
-
-    id = Column(BigInteger, primary_key=True, autoincrement=True)
-    memory_id = Column(String(64), nullable=False, index=True)
-    vector_store_id = Column(String(128), unique=True, nullable=False)
-    dimension = Column(Integer, default=1024)
-    model_name = Column(String(128))
-    created_at = Column(DateTime(timezone=True), default=_now)
-
-    __table_args__ = (
-        Index("idx_memory_vector_memory", "memory_id"),
-    )
-
-
-# ============================================================
-# 9. T_MEMORY_RELATION
+# 8. T_MEMORY_RELATION
 # ============================================================
 class MemoryRelation(Base):
     __tablename__ = "t_memory_relation"
@@ -378,3 +361,84 @@ class DedupAudit(Base):
         Index("idx_dedup_audit_action", "action", "created_at"),
         Index("idx_dedup_audit_user", "user_id", "created_at"),
     )
+
+
+# ============================================================
+# 14. T_MEMORY_CURSOR
+# ============================================================
+class MemoryCursor(Base):
+    """L1 抽取游标 — 记录每个 (user, agent, session) 已处理到哪条 L0。
+
+    cursor_key = f"{user_id}:{agent_id}:{session_id}"
+    只推进「处理过的」，不推进「读过的」；失败不推进（保证不丢）。
+    """
+    __tablename__ = "t_memory_cursor"
+
+    cursor_key = Column(String(255), primary_key=True, nullable=False)
+    last_processed_id = Column(BigInteger, nullable=False, default=0)
+    updated_at = Column(DateTime(timezone=True), default=_now, onupdate=_now)
+
+
+# ============================================================
+# 15. T_SCENE_BLOCK
+# ============================================================
+class SceneBlock(Base):
+    """L2 场景块 — 把 L1 原子记忆按主题聚合成有叙事的场景块（折中版：PG 表存全文）。
+
+    按 (scene_id, user_id) 归属（跨 agent）；scene_name 是 LLM 命名的主题（如"日本旅行"）。
+    """
+    __tablename__ = "t_scene_block"
+
+    scene_block_id = Column(String(64), primary_key=True, nullable=False)
+    user_id = Column(String(128), nullable=False, index=True)
+    scene_id = Column(String(128), nullable=False, index=True)
+    scene_name = Column(String(256), nullable=False)  # 主题场景名（LLM 命名）
+    content = Column(Text, nullable=False)  # 叙事全文
+    summary = Column(Text, nullable=True)  # 导航摘要
+    memory_ids = Column(JSON, default=list)  # 聚合的 L1 记忆 id 列表
+    heat = Column(Integer, default=1)
+    status = Column(String(32), default="active")
+    created_at = Column(DateTime(timezone=True), default=_now)
+    updated_at = Column(DateTime(timezone=True), default=_now, onupdate=_now)
+
+    __table_args__ = (
+        Index("idx_scene_block_user_scene", "user_id", "scene_id"),
+    )
+
+
+# ============================================================
+# 16. T_PERSONA
+# ============================================================
+class Persona(Base):
+    """L3 画像 — 从 L2 场景块抽象出的长期稳定画像（persona 自由文本）。
+
+    按 (scene_id, user_id) 归属（跨 agent）；last_persona_time 用于「只读变化场景」的增量判定。
+    """
+    __tablename__ = "t_persona"
+
+    persona_id = Column(String(64), primary_key=True, nullable=False)
+    user_id = Column(String(128), nullable=False, index=True)
+    scene_id = Column(String(128), nullable=False, index=True)
+    content = Column(Text, nullable=False)  # persona 自由文本
+    last_persona_time = Column(DateTime(timezone=True), nullable=True)  # 上次生成画像时间（C2 变化场景判定）
+    last_seq_id = Column(BigInteger, nullable=True)  # 上次画像时的 L1 最大 seq_id（C1 触发计数用）
+    created_at = Column(DateTime(timezone=True), default=_now)
+    updated_at = Column(DateTime(timezone=True), default=_now, onupdate=_now)
+
+    __table_args__ = (
+        Index("idx_persona_user_scene", "user_id", "scene_id"),
+    )
+
+
+# ============================================================
+# 17. T_PROXY_SESSION
+# ============================================================
+class ProxySession(Base):
+    """透明代理的 sessionKey → session_id 映射（落 DB，避免重启记忆分家）。"""
+    __tablename__ = "t_proxy_session"
+
+    space_id = Column(String(128), primary_key=True, nullable=False)
+    session_key = Column(String(256), primary_key=True, nullable=False)
+    session_id = Column(String(128), nullable=False)
+    created_at = Column(DateTime(timezone=True), default=_now)
+    updated_at = Column(DateTime(timezone=True), default=_now, onupdate=_now)

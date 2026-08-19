@@ -157,41 +157,6 @@ class MemoryWriteResponse(BaseModel):
 
 
 # ============================================================
-# 异步写入
-# ============================================================
-
-class AsyncWriteRequest(BaseModel):
-    """异步写入请求 — 同 write 格式，支持三种数据类型"""
-    user_id: str = Field(..., min_length=1, max_length=128)
-    scene_id: Optional[str] = Field(None, max_length=128)
-    session_id: str = Field(..., min_length=1, max_length=128)
-    task_id: Optional[str] = Field(None, max_length=128)
-    interaction_type: str = Field(default="dialogue")
-    messages: list[MessageItem] = Field(default_factory=list, max_length=100)
-    # 历史会话专用字段
-    session_time: Optional[str] = Field(None)
-    session_source: Optional[str] = Field(None, max_length=256)
-    session_summary: Optional[str] = Field(None, max_length=10000)
-    # 任务过程专用字段
-    task_goal: Optional[str] = Field(None, max_length=2000)
-    task_progress: Optional[str] = Field(None, max_length=5000)
-    task_result: Optional[str] = Field(None, max_length=5000)
-    metadata: Optional[dict[str, Any]] = Field(None)
-
-    @field_validator("user_id")
-    @classmethod
-    def normalize_user_id(cls, v: str) -> str:
-        return v.strip().lower()
-
-
-class AsyncWriteResponse(BaseModel):
-    """异步写入响应"""
-    request_id: str = Field(..., description="异步请求 ID")
-    status: str = Field(default="accepted")
-    message: str = Field(default="异步写入已提交")
-
-
-# ============================================================
 # 检索
 # ============================================================
 
@@ -203,9 +168,7 @@ class MemorySearchRequest(BaseModel):
     task_id: Optional[str] = Field(None)
     session_id: Optional[str] = Field(None)
     memory_types: Optional[list[str]] = Field(None, description="筛选类型: preference/fact/task/decision/constraint")
-    status: Optional[list[str]] = Field(None, description="按状态过滤: active/deleted/archived")
     keyword: Optional[str] = Field(None, description="应用层关键词后过滤（mem0 BM25 融合不保证TopK全命中，传入后强制过滤）")
-    max_content_length: Optional[int] = Field(None, description="内容最大长度")
     top_k: int = Field(default=10, ge=1, le=50)
     time_start: Optional[datetime] = Field(None)
     time_end: Optional[datetime] = Field(None)

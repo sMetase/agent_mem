@@ -166,7 +166,6 @@ class MemoryExtractor:
     async def extract(
         self,
         text: str,
-        types: Optional[list[str]] = None,
         task_context: Optional[dict] = None,
     ) -> ExtractionResult:
         if not text.strip():

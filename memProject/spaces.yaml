@@ -1,0 +1,19 @@
+# ============================================================
+# 透明代理接入方配置 — spaceId → 身份映射
+#
+# 一个 spaceId = 一个外部接入方。外部 agent 只改 base URL 指向
+# /proxy/{spaceId}/v1/chat/completions，Proxy 据此识别身份。
+#
+# 字段说明：
+#   user_id  - 记忆系统里的用户标识
+#   api_key  - 预注册智能体的 API Key（Proxy 调记忆接口用）
+#   scene_id - 预注册场景（数据隔离）
+#   agent_id - 预注册智能体
+# ============================================================
+
+spaces:
+  space_001:
+    user_id: "proxy_test_user"
+    api_key: "mem_76ae8360471764043e6d6fd596f9e279f551e3bfc701342b1143df4e4ac92929"
+    scene_id: "scene_acb9335f"
+    agent_id: "agent_c6964834eaca4f14"
