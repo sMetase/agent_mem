@@ -12,7 +12,7 @@ import jieba
 
 
 def _word_to_id(word: str) -> int:
-    """词 → uint32 稳定 hash（md5 前 8 位，避免 Python 内置 hash 的随机化）。"""
+    """词 → uint32 稳定 hash（md5 前 8 位，Qdrant sparse indices 为 uint32，此为上限；32bit 碰撞是格式固有约束，非加位可解）。"""
     return int(hashlib.md5(word.encode("utf-8")).hexdigest()[:8], 16)
 
 

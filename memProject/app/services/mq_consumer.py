@@ -29,7 +29,7 @@ from app.core.config import get_settings
 from app.core.database import async_session_factory
 from app.core.logger import get_logger
 from app.models.base import Session
-from app.services.l0_store import build_l0_records, persist_l0
+from app.services.l0_store import build_l0_records, persist_l0, ensure_session_title
 from app.services.mq_producer import mq_producer as _mq_producer
 
 logger = get_logger("mq_consumer")
@@ -179,6 +179,9 @@ async def _dispatch_and_store(
 
         # 更新 T_SESSION.message_count
         await _update_session_count(session, body.get("session_id"), count)
+
+        # 首次落 L0 时生成会话 title（title 为空才设置）
+        await ensure_session_title(session, body.get("session_id") or "", body.get("messages") or [])
 
         await session.commit()
 

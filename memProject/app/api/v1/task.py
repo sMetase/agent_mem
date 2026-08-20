@@ -123,19 +123,19 @@ async def task_get(
 
 @router.get("", summary="任务列表")
 async def task_list(
-    user_id: str | None = Query(None),
     status: str | None = Query(None),
     session_id: str | None = Query(None),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
     _agent: str = Depends(get_current_agent),
+    user_id: str = Depends(get_current_user_id),
 ):
-    """分页查询任务列表"""
+    """分页查询任务列表（user 从 X-User-Id header 派生，不客户端传参）"""
     query = select(Task)
 
     if user_id:
-        query = query.where(Task.user_id == user_id.strip().lower())
+        query = query.where(Task.user_id == user_id)
     if status:
         query = query.where(Task.status == status)
     if session_id:

@@ -397,8 +397,11 @@ class MemoryStore:
         scene_id: Optional[str] = None,
         task_id: Optional[str] = None,
         session_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
         memory_types: Optional[list[str]] = None,
         memory_scope: Optional[str] = None,
+        time_start: Optional[datetime] = None,
+        time_end: Optional[datetime] = None,
         status: str = "active",
         page: int = 1,
         page_size: int = 20,
@@ -415,10 +418,16 @@ class MemoryStore:
             stmt = stmt.where(Memory.task_id == task_id)
         if session_id:
             stmt = stmt.where(Memory.session_id == session_id)
+        if agent_id:
+            stmt = stmt.where(Memory.agent_id == agent_id)
         if memory_types:
             stmt = stmt.where(Memory.memory_type.in_(memory_types))
         if memory_scope:
             stmt = stmt.where(Memory.memory_scope == memory_scope)
+        if time_start:
+            stmt = stmt.where(Memory.created_at >= time_start)
+        if time_end:
+            stmt = stmt.where(Memory.created_at <= time_end)
 
         # Count
         count_stmt = select(func.count()).select_from(stmt.subquery())

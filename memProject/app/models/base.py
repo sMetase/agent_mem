@@ -67,6 +67,7 @@ class Scene(Base):
 
     id = Column(String(32), primary_key=True, default=_gen_uuid)
     scene_id = Column(String(128), unique=True, nullable=False, index=True)
+    user_id = Column(String(128), nullable=True, index=True, comment="场景归属用户（私有隔离，可空兼容历史数据）")
     scene_name = Column(String(256))
     description = Column(Text)
     is_active = Column(Boolean, default=True)
@@ -88,6 +89,7 @@ class Session(Base):
     scene_id = Column(String(128), nullable=True, index=True)
     task_id = Column(String(128), nullable=True, index=True)
     status = Column(String(32), default="active")
+    title = Column(String(512), nullable=True, comment="会话标题（首条有效 user 消息前 20 字，首次落 L0 时生成一次）")
     started_at = Column(DateTime(timezone=True), default=_now)
     ended_at = Column(DateTime(timezone=True), nullable=True)
     message_count = Column(Integer, default=0)

@@ -13,12 +13,12 @@ from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.api.deps import get_current_agent
+from app.api.deps import get_current_agent, get_current_user_id
 from app.core.database import get_db
 from app.core.exceptions import NotFoundError, ConflictError, AuthenticationError, AuthorizationError
 from app.core.logger import get_logger
 from app.core.security import generate_agent_id, generate_api_key, hash_api_key
-from app.models.base import Agent
+from app.models.base import Agent, Scene
 from app.schemas.agent import (
     AgentRegisterRequest,
     AgentRegisterResponse,
@@ -33,7 +33,11 @@ router = APIRouter()
 
 
 @router.post("/register", summary="注册智能体", status_code=201)
-async def agent_register(body: AgentRegisterRequest, db: AsyncSession = Depends(get_db)):
+async def agent_register(
+    body: AgentRegisterRequest,
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(get_current_user_id),
+):
     """
     注册新智能体。
 
@@ -45,13 +49,28 @@ async def agent_register(body: AgentRegisterRequest, db: AsyncSession = Depends(
     api_key = generate_api_key()
     api_key_hash = hash_api_key(api_key)
 
-    # 校验 scene_id 是否存在
+    # 校验 scene_id 是否存在 + 归属当前用户（场景私有）
     from app.models.base import Scene
-    scene_result = await db.execute(
-        select(Scene).where(Scene.scene_id == body.scene_id, Scene.is_active == True)
-    )
-    if not scene_result.scalar_one_or_none():
+    scene = (
+        await db.execute(
+            select(Scene).where(Scene.scene_id == body.scene_id, Scene.is_active == True)
+        )
+    ).scalar_one_or_none()
+    if not scene:
         raise NotFoundError(f"场景不存在或已停用: {body.scene_id}")
+    if user_id and scene.user_id != user_id:
+        raise AuthorizationError(f"无权在该场景下注册智能体: {body.scene_id}")
+
+    # 同名校验：同一场景下不能注册同名智能体（已停用的不算）
+    dup = await db.execute(
+        select(Agent).where(
+            Agent.scene_id == body.scene_id,
+            Agent.agent_name == body.agent_name,
+            Agent.is_active == True,
+        )
+    )
+    if dup.scalar_one_or_none():
+        raise ConflictError(f"该场景下已存在同名智能体: {body.agent_name}")
 
     # 检查 agent_id 冲突（几乎不可能，但做防御）
     existing = await db.execute(
@@ -121,10 +140,15 @@ async def agent_list(
     page_size: int = Query(20, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
     _current: str = Depends(get_current_agent),
+    user_id: str = Depends(get_current_user_id),
 ):
-    """分页查询智能体列表"""
+    """分页查询智能体列表（user 从 X-User-Id header 派生，通过 scene 关联过滤）"""
     query = select(Agent)
 
+    if user_id:
+        query = query.join(Scene, Agent.scene_id == Scene.scene_id).where(
+            Scene.user_id == user_id
+        )
     if scene_id:
         query = query.where(Agent.scene_id == scene_id)
     if is_active is not None:

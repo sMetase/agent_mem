@@ -58,6 +58,7 @@ from app.services.l0_store import (
     count_l0_records,
     build_l0_records,
     persist_l0,
+    ensure_session_title,
 )
 from app.services.memory_store import memory_store
 from app.services.validation_service import (
@@ -217,6 +218,8 @@ async def memory_write(
         record_ids=record_ids,
     )
     await persist_l0(db, records)
+    # 首次落 L0 时生成会话 title（title 为空才设置）
+    await ensure_session_title(db, effective_session_id, body.messages)
     await db.commit()
 
     elapsed = round((time_module.perf_counter() - start) * 1000, 2)
@@ -691,13 +694,27 @@ async def memory_delete(
 # 列出全部 — 对齐前端对接文档 一.3 节
 # ============================================================
 
+def _parse_iso_time(value: str | None) -> datetime | None:
+    """解析 ISO 8601 时间字符串（容忍 Z 后缀），失败返回 None。"""
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
 @router.post("/list", summary="列出全部记忆")
 async def memory_list(
     user_id: str = Query(...),
     scene_id: str | None = Query(None),
     task_id: str | None = Query(None),
     session_id: str | None = Query(None),
+    agent_id: str | None = Query(None, description="智能体标识"),
+    memory_type: str | None = Query(None, description="记忆类型"),
     memory_scope: str | None = Query(None),
+    time_start: str | None = Query(None, description="时间范围起点 ISO 8601"),
+    time_end: str | None = Query(None, description="时间范围终点 ISO 8601"),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
@@ -706,8 +723,8 @@ async def memory_list(
     """
     分页列出用户全部记忆。
 
-    优先使用 MemoryStore 直查 PostgreSQL；
-    MemoryStore 查询为空时降级到 MCP 路径。
+    支持按 scene/task/session/agent/memory_type/memory_scope/time 过滤，
+    优先使用 MemoryStore 直查 PostgreSQL；查询为空时降级到 MCP 路径。
     """
     try:
         result = await memory_store.list_memories(
@@ -716,7 +733,11 @@ async def memory_list(
             scene_id=scene_id,
             task_id=task_id,
             session_id=session_id,
+            agent_id=agent_id,
+            memory_types=[memory_type] if memory_type else None,
             memory_scope=memory_scope,
+            time_start=_parse_iso_time(time_start),
+            time_end=_parse_iso_time(time_end),
             page=page,
             page_size=page_size,
         )

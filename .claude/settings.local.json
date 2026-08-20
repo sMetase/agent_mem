@@ -33,7 +33,9 @@
       "Bash(curl *)",
       "Bash(python3 -c \"import sys,json; d=json.loads\\(sys.stdin.readline\\(\\)\\); print\\(json.dumps\\({k: type\\(v\\).__name__ if k != 'conversation' else f'list[{len\\(v\\)}]' for k,v in d.items\\(\\)}, indent=2\\)\\); print\\('fields:', list\\(d.keys\\(\\)\\)\\); print\\('conv_fields:', list\\(d['conversation'][0].keys\\(\\)\\) if d['conversation'] else 'empty'\\)\")",
       "Bash(.venv/Scripts/python.exe tests/test_with_dataset.py --count 3 --dry-run)",
-      "Bash(.venv/Scripts/python.exe tests/test_with_dataset.py --count 1 --type dialogue)"
+      "Bash(.venv/Scripts/python.exe tests/test_with_dataset.py --count 1 --type dialogue)",
+      "Bash(powershell.exe -Command \"Get-Process python | Stop-Process -Force\")",
+      "Bash(nohup .venv/Scripts/python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000)"
     ]
   }
 }

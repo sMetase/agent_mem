@@ -34,8 +34,6 @@ from app.services.embedding_client import EmbeddingClient
 from app.services.memory_generator import MemoryCandidate
 
 logger = get_logger("memory_dedup")
-import sys
-print("DEDUP_V3_LOADED_PRINT", file=sys.stderr, flush=True)
 
 _audit_id_prefix = "audit"
 

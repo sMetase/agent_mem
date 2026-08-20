@@ -160,3 +160,34 @@ async def persist_l0(db: AsyncSession, records: list[dict]) -> int:
     )
     result = await db.execute(stmt)
     return result.rowcount or 0
+
+
+GREETING_WORDS = {"你好", "您好", "在吗", "hi", "hello", "哈喽", "hey"}
+
+
+def gen_session_title(messages: list[dict]) -> str | None:
+    """从对话消息生成会话标题：首条有效 user 消息前 20 字（跳过寒暄）。"""
+    for msg in messages or []:
+        if msg.get("role") != "user":
+            continue
+        content = (msg.get("content") or "").strip()
+        if not content:
+            continue
+        if content.lower() in GREETING_WORDS or len(content) <= 2:
+            continue
+        return content[:20]
+    return None
+
+
+async def ensure_session_title(db: AsyncSession, session_id: str, messages: list[dict]) -> None:
+    """会话首次落 L0 时生成 title（title 为空时设置一次，之后不重算）。"""
+    from sqlalchemy import select
+    from app.models.base import Session
+    result = await db.execute(
+        select(Session).where(Session.session_id == session_id).limit(1)
+    )
+    sess = result.scalar_one_or_none()
+    if sess is None or sess.title:
+        return
+    title = gen_session_title(messages)
+    sess.title = title or f"会话 {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M')}"

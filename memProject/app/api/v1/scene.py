@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_agent
+from app.api.deps import get_current_agent, get_current_user_id
 from app.core.database import get_db
 from app.core.exceptions import NotFoundError, ConflictError
 from app.core.logger import get_logger
@@ -22,16 +22,36 @@ logger = get_logger("scene_api")
 router = APIRouter()
 
 
+def _assert_scene_access(scene: Scene, user_id: str) -> None:
+    """场景归属校验：生产模式（user_id 非空）下，无主（scene.user_id=None）或越权场景拒绝访问；开发模式（user_id 空）跳过。"""
+    if user_id and scene.user_id != user_id:
+        raise NotFoundError(f"场景不存在: {scene.scene_id}")
+
+
 @router.post("", summary="创建场景", status_code=201)
 async def scene_create(
     body: SceneCreateRequest,
     db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(get_current_user_id),
 ):
-    """创建新场景（接入前置，无需鉴权——开启 AUTH_ENABLED 后避免 bootstrap 死锁）"""
+    """创建新场景，绑定 X-User-Id（场景私有隔离）。"""
+    # 同名校验：同一用户下不能创建同名场景（已停用的不算）
+    if user_id:
+        dup = await db.execute(
+            select(Scene).where(
+                Scene.user_id == user_id,
+                Scene.scene_name == body.scene_name,
+                Scene.is_active == True,
+            )
+        )
+        if dup.scalar_one_or_none():
+            raise ConflictError(f"已存在同名场景: {body.scene_name}")
+
     scene_id = generate_scene_id()
 
     scene = Scene(
         scene_id=scene_id,
+        user_id=user_id or None,
         scene_name=body.scene_name,
         description=body.description,
         is_active=True,
@@ -58,6 +78,7 @@ async def scene_get(
     scene_id: str,
     db: AsyncSession = Depends(get_db),
     _current: str = Depends(get_current_agent),
+    user_id: str = Depends(get_current_user_id),
 ):
     """查询单个场景信息"""
     result = await db.execute(
@@ -66,6 +87,7 @@ async def scene_get(
     scene = result.scalar_one_or_none()
     if not scene:
         raise NotFoundError(f"场景不存在: {scene_id}")
+    _assert_scene_access(scene, user_id)
 
     return ok({
         "scene_id": scene.scene_id,
@@ -84,10 +106,13 @@ async def scene_list(
     page_size: int = Query(20, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
     _current: str = Depends(get_current_agent),
+    user_id: str = Depends(get_current_user_id),
 ):
-    """分页查询场景列表"""
+    """分页查询场景列表（按 X-User-Id 过滤，仅返回当前用户场景）"""
     query = select(Scene)
 
+    if user_id:
+        query = query.where(Scene.user_id == user_id)
     if is_active is not None:
         query = query.where(Scene.is_active == is_active)
 
@@ -125,6 +150,7 @@ async def scene_update(
     body: SceneUpdateRequest,
     db: AsyncSession = Depends(get_db),
     _current: str = Depends(get_current_agent),
+    user_id: str = Depends(get_current_user_id),
 ):
     """更新场景信息"""
     result = await db.execute(
@@ -133,6 +159,7 @@ async def scene_update(
     scene = result.scalar_one_or_none()
     if not scene:
         raise NotFoundError(f"场景不存在: {scene_id}")
+    _assert_scene_access(scene, user_id)
 
     if body.scene_name is not None:
         scene.scene_name = body.scene_name
@@ -154,6 +181,7 @@ async def scene_disable(
     scene_id: str,
     db: AsyncSession = Depends(get_db),
     _current: str = Depends(get_current_agent),
+    user_id: str = Depends(get_current_user_id),
 ):
     """停用场景（软删除）"""
     result = await db.execute(
@@ -162,6 +190,7 @@ async def scene_disable(
     scene = result.scalar_one_or_none()
     if not scene:
         raise NotFoundError(f"场景不存在: {scene_id}")
+    _assert_scene_access(scene, user_id)
 
     scene.is_active = False
     await db.commit()

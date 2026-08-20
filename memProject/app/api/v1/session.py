@@ -88,6 +88,7 @@ async def session_get(
         "scene_id": session.scene_id,
         "task_id": session.task_id,
         "status": session.status,
+        "title": session.title,
         "message_count": session.message_count,
         "started_at": session.started_at.isoformat() if session.started_at else None,
         "ended_at": session.ended_at.isoformat() if session.ended_at else None,
@@ -96,7 +97,6 @@ async def session_get(
 
 @router.get("", summary="会话列表")
 async def session_list(
-    user_id: str | None = Query(None),
     agent_id: str | None = Query(None),
     status: str | None = Query(None),
     scene_id: str | None = Query(None),
@@ -104,12 +104,13 @@ async def session_list(
     page_size: int = Query(20, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
     _agent: str = Depends(get_current_agent),
+    user_id: str = Depends(get_current_user_id),
 ):
-    """分页查询会话列表"""
+    """分页查询会话列表（user 从 X-User-Id header 派生，不客户端传参）"""
     query = select(Session)
 
     if user_id:
-        query = query.where(Session.user_id == user_id.strip().lower())
+        query = query.where(Session.user_id == user_id)
     if agent_id:
         query = query.where(Session.agent_id == agent_id.strip().lower())
     if status:
@@ -133,6 +134,7 @@ async def session_list(
             "scene_id": s.scene_id,
             "task_id": s.task_id,
             "status": s.status,
+            "title": s.title,
             "message_count": s.message_count,
             "started_at": s.started_at.isoformat() if s.started_at else None,
             "ended_at": s.ended_at.isoformat() if s.ended_at else None,
