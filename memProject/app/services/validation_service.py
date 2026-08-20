@@ -184,6 +184,8 @@ def standardize_timestamp(value: Any) -> datetime:
         value = value.strip()
         # 替换 T 前面的空格（某些客户端可能发送 "2026-07-06 10:00:00"）
         normalized = value.replace(" ", "T", 1) if "T" not in value else value
+        # 兼容 Z 后缀（Python < 3.11 的 fromisoformat 不支持 Z）
+        normalized = normalized.replace("Z", "+00:00")
         try:
             # Python 3.11+ fromisoformat 支持更广泛的 ISO 8601 格式
             dt = datetime.fromisoformat(normalized)
@@ -389,6 +391,8 @@ def _validate_iso8601(value: str) -> str | None:
         from datetime import datetime
         # 尝试解析
         normalized = value.strip().replace(" ", "T", 1) if "T" not in value else value.strip()
+        # 兼容 Z 后缀（Python < 3.11 的 fromisoformat 不支持 Z）
+        normalized = normalized.replace("Z", "+00:00")
         datetime.fromisoformat(normalized)
         return None
     except (ValueError, TypeError) as e:
