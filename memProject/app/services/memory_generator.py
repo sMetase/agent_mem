@@ -64,7 +64,12 @@ class MemoryGenerator:
     def __init__(self, llm: LLMClient) -> None:
         self._llm = llm
 
-    async def generate(self, extraction_result: ExtractionResult) -> list[MemoryCandidate]:
+    async def generate(
+        self,
+        extraction_result: ExtractionResult,
+        model: Optional[str] = None,
+        api_key: Optional[str] = None,
+    ) -> list[MemoryCandidate]:
         """
         从抽取结果生成结构化记忆。
 
@@ -108,6 +113,8 @@ class MemoryGenerator:
                 user_content=user_content,
                 output_schema=MEMORY_GENERATION_OUTPUT_SCHEMA,
                 max_tokens=4000,  # 记忆生成可能返回多条，需要更大输出空间
+                model=model,
+                api_key=api_key,
             )
 
             raw_memories = llm_result.get("memories", [])

@@ -14,6 +14,8 @@ class AgentRegisterRequest(BaseModel):
     agent_name: str = Field(..., min_length=1, max_length=256, description="智能体名称")
     scene_id: str = Field(..., min_length=1, max_length=128, description="所属场景标识（必填，用于数据隔离）")
     permissions: Optional[list[str]] = Field(default=["read", "write"], description="权限列表")
+    llm_model: Optional[str] = Field(None, max_length=128, description="该 agent 使用的 LLM 模型（可空，空则用全局默认）")
+    llm_api_key: Optional[str] = Field(None, max_length=256, description="该 agent 使用的 LLM API Key（可空，空则用全局默认）")
 
 
 class AgentRegisterResponse(BaseModel):
@@ -30,6 +32,8 @@ class AgentUpdateRequest(BaseModel):
     agent_name: Optional[str] = Field(None, max_length=256)
     is_active: Optional[bool] = Field(None, description="启用/停用")
     permissions: Optional[list[str]] = Field(None)
+    llm_model: Optional[str] = Field(None, max_length=128, description="该 agent 使用的 LLM 模型")
+    llm_api_key: Optional[str] = Field(None, max_length=256, description="该 agent 使用的 LLM API Key")
     extra_meta: Optional[dict[str, Any]] = Field(None)
 
 

@@ -167,6 +167,7 @@ class MemorySearchRequest(BaseModel):
     scene_id: Optional[str] = Field(None)
     task_id: Optional[str] = Field(None)
     session_id: Optional[str] = Field(None)
+    agent_id: Optional[str] = Field(None, description="智能体标识")
     memory_types: Optional[list[str]] = Field(None, description="筛选类型: preference/fact/task/decision/constraint")
     keyword: Optional[str] = Field(None, description="应用层关键词后过滤（mem0 BM25 融合不保证TopK全命中，传入后强制过滤）")
     top_k: int = Field(default=10, ge=1, le=50)

@@ -54,6 +54,8 @@ class Agent(Base):
     api_key_prefix = Column(String(16))
     is_active = Column(Boolean, default=True)
     permissions = Column(JSON, default=list)
+    llm_model = Column(String(128), nullable=True, comment="该 agent 使用的 LLM 模型（可空，空则用全局默认）")
+    llm_api_key = Column(String(256), nullable=True, comment="该 agent 使用的 LLM API Key（可空，空则用全局默认）")
     extra_meta = Column(JSON, default=dict)
     created_at = Column(DateTime(timezone=True), default=_now)
     updated_at = Column(DateTime(timezone=True), default=_now, onupdate=_now)
@@ -443,4 +445,17 @@ class ProxySession(Base):
     session_key = Column(String(256), primary_key=True, nullable=False)
     session_id = Column(String(128), nullable=False)
     created_at = Column(DateTime(timezone=True), default=_now)
+    updated_at = Column(DateTime(timezone=True), default=_now, onupdate=_now)
+
+
+# ============================================================
+# 18. T_LLM_CONFIG
+# ============================================================
+class LlmConfig(Base):
+    """全局 LLM 默认配置（单行单例，agent 未配置 llm_model/api_key 时的 fallback）。"""
+    __tablename__ = "t_llm_config"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    llm_model = Column(String(128), nullable=True, comment="全局默认 LLM 模型")
+    llm_api_key = Column(String(256), nullable=True, comment="全局默认 LLM API Key")
     updated_at = Column(DateTime(timezone=True), default=_now, onupdate=_now)

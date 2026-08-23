@@ -177,8 +177,16 @@ async def _dispatch_and_store(
         )
         count = await persist_l0(session, records)
 
-        # 更新 T_SESSION.message_count
-        await _update_session_count(session, body.get("session_id"), count)
+        # 更新 T_SESSION.message_count（Session 不存在时用真实归属字段创建）
+        await _update_session_count(
+            session,
+            body.get("session_id"),
+            count,
+            user_id=body.get("user_id") or user_id,
+            agent_id=body.get("agent_id") or agent_id,
+            scene_id=body.get("scene_id"),
+            task_id=body.get("task_id"),
+        )
 
         # 首次落 L0 时生成会话 title（title 为空才设置）
         await ensure_session_title(session, body.get("session_id") or "", body.get("messages") or [])
@@ -188,8 +196,16 @@ async def _dispatch_and_store(
     return count
 
 
-async def _update_session_count(session, session_id_val: str, inc: int) -> None:
-    """更新 T_SESSION.message_count"""
+async def _update_session_count(
+    session,
+    session_id_val: str,
+    inc: int,
+    user_id: str = "",
+    agent_id: str | None = None,
+    scene_id: str | None = None,
+    task_id: str | None = None,
+) -> None:
+    """更新 T_SESSION.message_count；Session 不存在时用真实归属字段创建。"""
     from sqlalchemy import select, update
     result = await session.execute(
         select(Session.id, Session.message_count).where(
@@ -205,11 +221,13 @@ async def _update_session_count(session, session_id_val: str, inc: int) -> None:
             .values(message_count=new_count)
         )
     else:
-        # Session 不存在，创建一个
+        # Session 不存在，用消息真实归属字段创建（不再硬编码 consumer/system）
         session_obj = Session(
             session_id=session_id_val,
-            user_id="consumer",
-            agent_id="system",
+            user_id=user_id,
+            agent_id=agent_id,
+            scene_id=scene_id,
+            task_id=task_id,
             status="active",
             message_count=inc,
         )

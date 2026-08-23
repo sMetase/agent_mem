@@ -17,6 +17,7 @@ from app.core.database import async_session_factory
 from app.core.logger import get_logger
 from app.models.base import Memory, MemoryCursor, SceneBlock
 from app.services.l2_scene import aggregate_scenes, apply_scene_operations
+from app.services.llm_config import resolve_llm_config
 from app.services.worker_stats import record
 
 logger = get_logger("l2_worker")
@@ -83,7 +84,11 @@ async def _process_group(scene_id: str, user_id: str) -> int:
             for b in block_result.scalars().all()
         ]
 
-        operations = await aggregate_scenes(user_id, scene_id, new_memory_dicts, existing_blocks)
+        model, api_key = await resolve_llm_config(db, agent_id=None)
+        operations = await aggregate_scenes(
+            user_id, scene_id, new_memory_dicts, existing_blocks,
+            model=model, api_key=api_key,
+        )
         if not operations:
             # LLM 聚合失败：不推进游标（下轮重试）
             record("l2", False)

@@ -70,10 +70,14 @@ class LLMClient:
         temperature: float = DEFAULT_TEMPERATURE,
         max_tokens: int = DEFAULT_MAX_TOKENS,
         response_format: Optional[dict] = None,
+        model: Optional[str] = None,
+        api_key: Optional[str] = None,
     ) -> str:
-        """发送聊天请求，返回 assistant 的文本响应。"""
+        """发送聊天请求，返回 assistant 的文本响应。model/api_key 可覆盖全局默认（agent 级配置）。"""
+        model_name = model or self._model
+        api_key_val = api_key or self._api_key
         payload = {
-            "model": self._model,
+            "model": model_name,
             "messages": messages,
             "temperature": temperature,
             "max_tokens": max_tokens,
@@ -82,15 +86,16 @@ class LLMClient:
             payload["response_format"] = response_format
 
         url = f"{self._base_url}/chat/completions"
+        headers = {"Authorization": f"Bearer {api_key_val}"}
 
         for attempt in range(1, MAX_RETRIES + 1):
             try:
-                response = await self.http.post(url, json=payload)
+                response = await self.http.post(url, json=payload, headers=headers)
                 response.raise_for_status()
                 data = response.json()
                 content = data["choices"][0]["message"]["content"]
                 logger.info(
-                    f"LLM completion: model={self._model}, tokens={data.get('usage', {}).get('total_tokens', '?')}"
+                    f"LLM completion: model={model_name}, tokens={data.get('usage', {}).get('total_tokens', '?')}"
                 )
                 return content
             except httpx.HTTPStatusError as e:
@@ -117,6 +122,8 @@ class LLMClient:
         output_schema: dict,
         temperature: float = DEFAULT_TEMPERATURE,
         max_tokens: int = DEFAULT_MAX_TOKENS,
+        model: Optional[str] = None,
+        api_key: Optional[str] = None,
     ) -> dict:
         """
         发送带 system prompt 的结构化抽取请求，要求 JSON 输出。
@@ -137,6 +144,8 @@ class LLMClient:
             temperature=temperature,
             max_tokens=max_tokens,
             response_format={"type": "json_object"},
+            model=model,
+            api_key=api_key,
         )
 
         # 尝试直接解析

@@ -44,14 +44,22 @@ class CompressResponse(PydanticBaseModel):
 
 
 @router.post("/compress", summary="压缩长对话为结构化记忆 (Section 5.4)")
-async def memory_compress(body: CompressRequest, _agent: str = Depends(get_current_agent)):
+async def memory_compress(
+    body: CompressRequest,
+    db: AsyncSession = Depends(get_db),
+    _agent: str = Depends(get_current_agent),
+):
     """压缩长对话历史，保留关键事实/偏好/任务状态/决策/修正记录。"""
     from app.services.memory_compressor import get_compressor
+    from app.services.llm_config import resolve_llm_config
 
     compressor = get_compressor()
+    model, api_key = await resolve_llm_config(db, _agent)
     compressed = await compressor.compress_and_validate(
         body.text,
         validate_preservation=body.validate_preservation,
+        model=model,
+        api_key=api_key,
     )
 
     return ok(CompressResponse(
@@ -92,6 +100,7 @@ async def memory_context_complete(
 ):
     """从已存储的压缩记忆中检索并补全当前查询所需的历史上下文。"""
     from app.services.memory_compressor import get_compressor
+    from app.services.llm_config import resolve_llm_config
     from sqlalchemy import select as _select
 
     # 从 DB 加载记忆
@@ -126,10 +135,13 @@ async def memory_context_complete(
         compressed_list.append(cm)
 
     compressor = get_compressor()
+    model, api_key = await resolve_llm_config(db, _agent)
     result = await compressor.complete_context(
         query=body.query,
         compressed_memories=compressed_list,
         max_context_tokens=body.max_context_tokens,
+        model=model,
+        api_key=api_key,
     )
 
     return ok(ContextCompleteResponse(

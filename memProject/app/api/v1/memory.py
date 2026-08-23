@@ -297,6 +297,8 @@ async def memory_search(
             payload_filters["task_id"] = body.task_id
         if body.session_id:
             payload_filters["session_id"] = body.session_id
+        if body.agent_id:
+            payload_filters["agent_id"] = body.agent_id
 
         hits = await vector_store.hybrid_search(
             query_vector=query_vector,
@@ -317,6 +319,8 @@ async def memory_search(
         mem_query = _sel(Memory).where(Memory.memory_id.in_(list(id_map.keys())))
         if body.memory_types:
             mem_query = mem_query.where(Memory.memory_type.in_(body.memory_types))
+        if body.agent_id:
+            mem_query = mem_query.where(Memory.agent_id == body.agent_id)
         if body.status:
             mem_query = mem_query.where(Memory.status.in_(body.status))
         else:
@@ -889,6 +893,7 @@ async def memory_stats(
 
 class ProfileRequest(BaseModel):
     user_id: str = Field(..., description="用户标识")
+    scene_id: Optional[str] = Field(None, description="场景标识（可选，不传则返回全部场景画像）")
     max_memories: int = Field(default=50, description="最多加载的偏好+事实记忆数")
 
 
@@ -896,26 +901,46 @@ class ProfileRequest(BaseModel):
 async def memory_profile(
     body: ProfileRequest,
     db: AsyncSession = Depends(get_db),
-    agent_id: str = Depends(get_current_agent),
 ):
-    """返回该 user 在该 scene 的 L3 画像（persona 自由文本），消费 L2 场景块（硬隔离）。"""
+    """返回用户画像。传 scene_id 查单场景；不传则返回该用户全部场景的画像列表。"""
     try:
         from sqlalchemy import select as _sel
-        from app.models.base import Agent
+        from app.models.base import Persona, Scene
         from app.services.l3_persona import generate_persona
 
-        # 方案 A：从 agent 推导 scene_id（硬隔离）
-        agent_result = await db.execute(_sel(Agent).where(Agent.agent_id == agent_id))
-        agent = agent_result.scalar_one_or_none()
-        scene_id = agent.scene_id if agent else None
-        if not scene_id:
-            return error(message="当前 agent 未绑定场景", code=-1, error_code="SCENE_REQUIRED")
+        if body.scene_id:
+            # 指定场景：生成/查该场景画像
+            result = await generate_persona(db, body.user_id, body.scene_id)
+            return ok({
+                "persona": result.get("content", ""),
+                "scene_id": body.scene_id,
+                "changed_scenes": result.get("changed_scenes", 0),
+            })
 
-        result = await generate_persona(db, body.user_id, scene_id)
+        # 全部场景：查该用户所有 persona + scene_name
+        personas_result = await db.execute(
+            _sel(Persona).where(Persona.user_id == body.user_id)
+        )
+        personas = list(personas_result.scalars().all())
+
+        scene_names: dict[str, str] = {}
+        scene_ids = [p.scene_id for p in personas if p.scene_id]
+        if scene_ids:
+            scenes_result = await db.execute(
+                _sel(Scene.scene_id, Scene.scene_name).where(Scene.scene_id.in_(scene_ids))
+            )
+            scene_names = {s.scene_id: s.scene_name for s in scenes_result.all()}
+
         return ok({
-            "persona": result.get("content", ""),
-            "scene_id": scene_id,
-            "changed_scenes": result.get("changed_scenes", 0),
+            "personas": [
+                {
+                    "scene_id": p.scene_id,
+                    "scene_name": scene_names.get(p.scene_id, p.scene_id or ""),
+                    "content": p.content,
+                }
+                for p in personas
+            ],
+            "total": len(personas),
         })
     except Exception as e:
         logger.error(f"Profile failed: {e}")

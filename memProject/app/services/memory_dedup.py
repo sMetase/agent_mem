@@ -31,6 +31,7 @@ from app.core.logger import get_logger
 from app.core.qdrant_client import QdrantClientSingleton
 from app.models.base import Memory, DedupAudit
 from app.services.embedding_client import EmbeddingClient
+from app.services.llm_config import resolve_llm_config
 from app.services.memory_generator import MemoryCandidate
 
 logger = get_logger("memory_dedup")
@@ -127,7 +128,8 @@ class DedupService:
             candidate_matches.append({"candidate": candidate, "similar": matches})
 
         # ── Step 2: LLM 批量判断（动作 + 局部整合后内容）──
-        llm_decisions = await self._llm_dedup_batch(candidate_matches)
+        model, api_key = await resolve_llm_config(db, agent_id=None)
+        llm_decisions = await self._llm_dedup_batch(candidate_matches, model=model, api_key=api_key)
 
         # ── Step 3: 应用决策 ──
         for i, cm in enumerate(candidate_matches):
@@ -283,7 +285,12 @@ class DedupService:
 
     # ── LLM 批量去重判断（含类型规则 + 局部整合）──
 
-    async def _llm_dedup_batch(self, candidate_matches: list[dict]) -> dict[int, dict]:
+    async def _llm_dedup_batch(
+        self,
+        candidate_matches: list[dict],
+        model: Optional[str] = None,
+        api_key: Optional[str] = None,
+    ) -> dict[int, dict]:
         """
         一次 LLM 调用判断所有候选与其相似记忆的关系，并输出局部整合后的内容。
         返回 {candidate_index: {"action": DedupAction, "content": str}}
@@ -344,7 +351,7 @@ class DedupService:
             result = await llm_client.chat_completion([{
                 "role": "user",
                 "content": prompt,
-            }], max_tokens=3000)
+            }], max_tokens=3000, model=model, api_key=api_key)
 
             data = json.loads(result)
             action_map = {

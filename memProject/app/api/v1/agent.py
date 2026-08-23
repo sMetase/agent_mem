@@ -18,6 +18,7 @@ from app.core.database import get_db
 from app.core.exceptions import NotFoundError, ConflictError, AuthenticationError, AuthorizationError
 from app.core.logger import get_logger
 from app.core.security import generate_agent_id, generate_api_key, hash_api_key
+from app.core.crypto import encrypt_secret
 from app.models.base import Agent, Scene
 from app.schemas.agent import (
     AgentRegisterRequest,
@@ -87,6 +88,8 @@ async def agent_register(
         api_key_prefix="mem_" + api_key[4:8] + "****",
         is_active=True,
         permissions=body.permissions,
+        llm_model=body.llm_model,
+        llm_api_key=encrypt_secret(body.llm_api_key),
     )
 
     db.add(agent)
@@ -127,6 +130,7 @@ async def agent_get(
         "api_key_prefix": agent.api_key_prefix,
         "is_active": agent.is_active,
         "permissions": agent.permissions,
+        "llm_model": agent.llm_model,
         "created_at": agent.created_at.isoformat() if agent.created_at else None,
         "updated_at": agent.updated_at.isoformat() if agent.updated_at else None,
     })
@@ -139,10 +143,9 @@ async def agent_list(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
-    _current: str = Depends(get_current_agent),
     user_id: str = Depends(get_current_user_id),
 ):
-    """分页查询智能体列表（user 从 X-User-Id header 派生，通过 scene 关联过滤）"""
+    """分页查询智能体列表（user 从 X-User-Id header 派生，通过 scene 关联过滤，无需 X-API-Key）"""
     query = select(Agent)
 
     if user_id:
@@ -172,6 +175,7 @@ async def agent_list(
             "api_key_prefix": a.api_key_prefix,
             "is_active": a.is_active,
             "permissions": a.permissions,
+            "llm_model": a.llm_model,
             "created_at": a.created_at.isoformat() if a.created_at else None,
             "updated_at": a.updated_at.isoformat() if a.updated_at else None,
         })
@@ -205,6 +209,10 @@ async def agent_update(
         agent.is_active = body.is_active
     if body.permissions is not None:
         agent.permissions = body.permissions
+    if body.llm_model is not None:
+        agent.llm_model = body.llm_model
+    if body.llm_api_key is not None:
+        agent.llm_api_key = encrypt_secret(body.llm_api_key)
     if body.extra_meta is not None:
         agent.extra_meta = body.extra_meta
 

@@ -190,6 +190,13 @@ class MemoryPipeline:
         """
         self._ensure_initialized()
 
+        # 查 LLM 配置：agent 级 > 全局默认(t_llm_config) > .env(LLMClient 兜底)
+        llm_model: Optional[str] = None
+        llm_api_key: Optional[str] = None
+        if db is not None:
+            from app.services.llm_config import resolve_llm_config
+            llm_model, llm_api_key = await resolve_llm_config(db, agent_id)
+
         result = PipelineResult()
 
         # ========== Phase 1: Extract ==========
@@ -198,6 +205,8 @@ class MemoryPipeline:
             extraction_result: ExtractionResult = await self._extractor.extract(
                 text=text,
                 task_context=task_context,
+                model=llm_model,
+                api_key=llm_api_key,
             )
         except Exception as e:
             raise MemoryGenerationError(f"记忆抽取阶段失败: {str(e)}")
@@ -209,7 +218,11 @@ class MemoryPipeline:
         # ========== Phase 2: Generate ==========
         logger.info("Pipeline Phase 2/4: Generating structured memories")
         try:
-            candidates: list[MemoryCandidate] = await self._generator.generate(extraction_result)
+            candidates: list[MemoryCandidate] = await self._generator.generate(
+                extraction_result,
+                model=llm_model,
+                api_key=llm_api_key,
+            )
         except Exception as e:
             raise MemoryGenerationError(f"记忆生成阶段失败: {str(e)}")
 
@@ -235,7 +248,10 @@ class MemoryPipeline:
                     f"high-importance candidates"
                 )
                 hi_candidates = [c for _, c in high_importance_candidates]
-                llm_reports = await auditor.audit(hi_candidates, source_text=text)
+                llm_reports = await auditor.audit(
+                    hi_candidates, source_text=text,
+                    model=llm_model, api_key=llm_api_key,
+                )
                 # 用 LLM 审计结果覆盖规则引擎结果
                 for (idx, _), llm_report in zip(high_importance_candidates, llm_reports):
                     quality_reports[idx] = llm_report
@@ -450,6 +466,7 @@ class MemoryPipeline:
                         vector=vector,
                         metadata={
                             "user_id": user_id,
+                            "agent_id": agent_id or "",
                             "scene_id": scene_id or "",
                             "task_id": task_id or "",
                             "session_id": session_id or "",

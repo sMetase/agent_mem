@@ -103,10 +103,9 @@ async def session_list(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
-    _agent: str = Depends(get_current_agent),
     user_id: str = Depends(get_current_user_id),
 ):
-    """分页查询会话列表（user 从 X-User-Id header 派生，不客户端传参）"""
+    """分页查询会话列表（user 从 X-User-Id header 派生，不客户端传参，无需 X-API-Key）"""
     query = select(Session)
 
     if user_id:
@@ -220,7 +219,13 @@ async def session_close(
     keep_count = total_count - len(compress_pool)  # pref/fact 原样保留
     compressed_count = len(compress_pool)
 
-    # ── Step 3: 压缩路径（pref/fact 不动，保持原样）──
+    # ── Step 2.5: preference/fact 升级为长期记忆（session_id=NULL, scope=user）──
+    keep_memories = [m for m in memories if m.memory_type not in compress_types]
+    for m in keep_memories:
+        m.session_id = None
+        m.memory_scope = "user"
+
+    # ── Step 3: 压缩路径（pref/fact 已升级，不进压缩池）──
     summary_text = ""
     if compress_pool:
         # 拼接为 LLM 输入
@@ -228,13 +233,15 @@ async def session_close(
         lines = "\n".join(f"- {c[:200]}" for c in contents[:30])
         try:
             from app.services.llm_client import llm_client as _llm
+            from app.services.llm_config import resolve_llm_config
+            _model, _api_key = await resolve_llm_config(db, session.agent_id)
             summary_text = await _llm.chat_completion([{
                 "role": "user",
                 "content": (
                     f"将以下会话记忆碎片总结为一段通顺的摘要（中文），"
                     f"保留关键信息，去除流程性冗余：\n{lines}"
                 ),
-            }], max_tokens=500)
+            }], max_tokens=500, model=_model, api_key=_api_key)
         except Exception as e:
             logger.warning(f"LLM 压缩总结失败: {e}")
             summary_text = "；".join(contents[:5])
@@ -293,6 +300,7 @@ async def session_close(
                 vector=vector,
                 metadata={
                     "user_id": session.user_id,
+                    "agent_id": session.agent_id or "",
                     "scene_id": session.scene_id or "",
                     "task_id": session.task_id or "",
                     "session_id": sid,

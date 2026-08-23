@@ -105,10 +105,9 @@ async def scene_list(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
-    _current: str = Depends(get_current_agent),
     user_id: str = Depends(get_current_user_id),
 ):
-    """分页查询场景列表（按 X-User-Id 过滤，仅返回当前用户场景）"""
+    """分页查询场景列表（按 X-User-Id 过滤，仅返回当前用户场景，无需 X-API-Key）"""
     query = select(Scene)
 
     if user_id:

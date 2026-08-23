@@ -128,10 +128,9 @@ async def task_list(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
-    _agent: str = Depends(get_current_agent),
     user_id: str = Depends(get_current_user_id),
 ):
-    """分页查询任务列表（user 从 X-User-Id header 派生，不客户端传参）"""
+    """分页查询任务列表（user 从 X-User-Id header 派生，不客户端传参，无需 X-API-Key）"""
     query = select(Task)
 
     if user_id:

@@ -336,6 +336,8 @@ class QualityAuditor:
         self,
         candidates: list[MemoryCandidate],
         source_text: str,
+        model: Optional[str] = None,
+        api_key: Optional[str] = None,
     ) -> list[QualityReport]:
         """
         使用 LLM 对记忆候选进行深度质量审计。
@@ -374,6 +376,8 @@ class QualityAuditor:
                 system_prompt=QUALITY_CHECK_SYSTEM_PROMPT,
                 user_content=user_content,
                 output_schema=QUALITY_CHECK_OUTPUT_SCHEMA,
+                model=model,
+                api_key=api_key,
             )
 
             evaluations = data.get("evaluations", [])

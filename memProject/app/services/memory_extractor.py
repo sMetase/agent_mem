@@ -167,6 +167,8 @@ class MemoryExtractor:
         self,
         text: str,
         task_context: Optional[dict] = None,
+        model: Optional[str] = None,
+        api_key: Optional[str] = None,
     ) -> ExtractionResult:
         if not text.strip():
             return ExtractionResult(source_text=text)
@@ -177,6 +179,9 @@ class MemoryExtractor:
                 system_prompt=EXTRACTION_SYSTEM_PROMPT,
                 user_content=user_content,
                 output_schema=EXTRACTION_OUTPUT_SCHEMA,
+                max_tokens=8192,
+                model=model,
+                api_key=api_key,
             )
         except Exception as e:
             raise MemoryGenerationError(f"记忆抽取失败: {str(e)}")

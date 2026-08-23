@@ -130,6 +130,8 @@ class MemoryCompressor:
         self,
         conversation_text: str,
         max_input_chars: int = 8000,
+        model: Optional[str] = None,
+        api_key: Optional[str] = None,
     ) -> CompressedMemory:
         """
         将长对话历史压缩为结构化紧凑表示。
@@ -155,6 +157,8 @@ class MemoryCompressor:
                 user_content=user_content,
                 output_schema=COMPRESSION_OUTPUT_SCHEMA,
                 max_tokens=4000,
+                model=model,
+                api_key=api_key,
             )
 
             compressed = CompressedMemory(
@@ -200,6 +204,8 @@ class MemoryCompressor:
         self,
         original_text: str,
         compressed: CompressedMemory,
+        model: Optional[str] = None,
+        api_key: Optional[str] = None,
     ) -> tuple[float, list[dict]]:
         """
         验证压缩后关键信息是否保留完整。
@@ -217,6 +223,8 @@ class MemoryCompressor:
                 user_content=user_content,
                 output_schema=PRESERVATION_CHECK_OUTPUT_SCHEMA,
                 max_tokens=2000,
+                model=model,
+                api_key=api_key,
             )
 
             score = data.get("preservation_score", 0.8)
@@ -247,6 +255,8 @@ class MemoryCompressor:
         query: str,
         compressed_memories: list[CompressedMemory],
         max_context_tokens: int = 3000,
+        model: Optional[str] = None,
+        api_key: Optional[str] = None,
     ) -> dict:
         """
         基于当前查询和历史压缩记忆，构建完整上下文。
@@ -282,6 +292,8 @@ class MemoryCompressor:
                 user_content=user_content,
                 output_schema=CONTEXT_COMPLETION_OUTPUT_SCHEMA,
                 max_tokens=3000,
+                model=model,
+                api_key=api_key,
             )
 
             context_text = data.get("context_text", "")
@@ -313,14 +325,18 @@ class MemoryCompressor:
         self,
         conversation_text: str,
         validate_preservation: bool = True,
+        model: Optional[str] = None,
+        api_key: Optional[str] = None,
     ) -> CompressedMemory:
         """
         压缩 + 可选的质量验证。
         """
-        compressed = await self.compress(conversation_text)
+        compressed = await self.compress(conversation_text, model=model, api_key=api_key)
 
         if validate_preservation:
-            score, lost = await self.check_preservation(conversation_text, compressed)
+            score, lost = await self.check_preservation(
+                conversation_text, compressed, model=model, api_key=api_key,
+            )
             compressed.preservation_score = score
             compressed.lost_items = lost
 

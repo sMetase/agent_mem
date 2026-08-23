@@ -10,6 +10,7 @@ L2 场景聚合 — 把 L1 原子记忆按主题聚合成有叙事的场景块�
 """
 
 import math
+from typing import Optional
 from uuid import uuid4
 
 from sqlalchemy import select, delete
@@ -68,6 +69,8 @@ async def aggregate_scenes(
     scene_id: str,
     new_memories: list[dict],
     existing_blocks: list[dict],
+    model: Optional[str] = None,
+    api_key: Optional[str] = None,
 ) -> list[dict]:
     """把新 L1 记忆聚合到场景块，返回 operations 列表（不落库）。"""
     if not new_memories:
@@ -92,6 +95,8 @@ async def aggregate_scenes(
             user_content=user_content,
             output_schema={"type": "object"},
             max_tokens=3000,
+            model=model,
+            api_key=api_key,
         )
     except Exception as e:
         logger.error(f"L2 聚合 LLM 失败: user={user_id}, scene={scene_id}, error={e}")
