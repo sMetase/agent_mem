@@ -1,0 +1,26 @@
+export const appRoutes = {
+  overview: '/',
+  modernPrototype: '/prototype',
+  agentAccess: '/access/agents',
+  agentManagement: '/access/agent-management',
+  dataSources: '/access/data-sources',
+  sceneManagement: '/access/scenes',
+  ingestion: '/ingestion',
+  memory: '/memory',
+  userMemory: '/memory/user',
+  sessionMemory: '/memory/session',
+  taskMemory: '/memory/task',
+  agentMemory: '/memory/agent',
+  memoryProfile: '/memory/profile',
+  retrieval: '/retrieval',
+  context: '/context',
+  task: '/task',
+  monitoring: '/monitoring',
+  healthMonitoring: '/monitoring/health',
+  callsMonitoring: '/monitoring/calls',
+  recordsMonitoring: '/monitoring/records',
+  settings: '/settings',
+  connectionSettings: '/settings/connection',
+} as const
+
+export type AppRoutePath = (typeof appRoutes)[keyof typeof appRoutes]

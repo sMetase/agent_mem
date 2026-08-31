@@ -1,0 +1,122 @@
+[
+  {
+    "content": "晨星物流的济南冷链配送优化项目统一采用 Python 3.12、FastAPI、PostgreSQL 16 和 Redis 7 开发后端服务，路线优化模块使用 OR-Tools，前端使用 React 与 TypeScript。",
+    "role": "user",
+    "scene_id": "logistics-test",
+    "task_id": "log_route_001"
+  },
+  {
+    "content": "路线优化任务计划在 2026 年 7 月 31 日前完成。需求分析和历史订单数据清洗已经完成，当前正在开发车辆路径算法，下一步是与调度接口联调并进行压力测试。",
+    "role": "user",
+    "scene_id": "logistics-test",
+    "task_id": "log_route_001"
+  },
+  {
+    "content": "济南配送项目的调度策略是：工作日 7:00 至 9:30 和 17:00 至 20:00 属于高峰时段，高峰期优先保证准时率；其他普通时段优先降低总里程和运输成本。",
+    "role": "user",
+    "scene_id": "logistics-test",
+    "task_id": "log_route_001"
+  },
+  {
+    "content": "冷链订单运输过程中必须保持货厢温度在 2 至 8 摄氏度。温度连续 5 分钟超出范围时触发一级告警，并要求司机在 10 分钟内确认处置。",
+    "role": "user",
+    "scene_id": "logistics-test",
+    "task_id": "log_route_001"
+  },
+  {
+    "content": "路线算法的目标函数同时考虑准时率、车辆总里程、冷链温控风险和司机工时。基础权重依次为 0.4、0.3、0.2 和 0.1，每晚根据当天履约数据重新计算一次方案。",
+    "role": "user",
+    "scene_id": "logistics-test",
+    "task_id": "log_route_001"
+  },
+  {
+    "content": "济南一号仓对 A 类高周转商品设置 300 件安全库存和 800 件补货上限；库存低于 300 件时自动创建补货建议，仓库主管确认后下发采购单。",
+    "role": "user",
+    "scene_id": "logistics-test",
+    "task_id": "log_warehouse_002"
+  },
+  {
+    "content": "仓库划分为常温区、冷藏区和冷冻区。冷藏区温度要求 2 至 8 摄氏度，冷冻区要求不高于零下 18 摄氏度，不同温区商品禁止混放。",
+    "role": "user",
+    "scene_id": "logistics-test",
+    "task_id": "log_warehouse_002"
+  },
+  {
+    "content": "所有入库商品通过 PDA 扫描商品码、批次号和有效期。系统发现批次号重复或有效期不足 30 天时会暂停上架，并转交质检人员复核。",
+    "role": "user",
+    "scene_id": "logistics-test",
+    "task_id": "log_warehouse_002"
+  },
+  {
+    "content": "仓库每天 22:00 执行增量盘点，每周日执行全量盘点。盘点差异率超过 0.5% 时必须生成异常报告，并由仓储经理在次日 12:00 前完成审核。",
+    "role": "user",
+    "scene_id": "logistics-test",
+    "task_id": "log_warehouse_002"
+  },
+  {
+    "content": "拣货任务采用先到期先出原则，同一有效期内按库位距离排序。系统将每批拣货任务限制在 25 个订单以内，以降低通道拥堵和复核错误。",
+    "role": "user",
+    "scene_id": "logistics-test",
+    "task_id": "log_warehouse_002"
+  },
+  {
+    "content": "济南城区配送使用 4.2 米冷藏车，单车最大载重 2.5 吨。车辆出发前必须完成油量、制冷机、车门密封和定位设备四项检查。",
+    "role": "user",
+    "scene_id": "logistics-test",
+    "task_id": "log_delivery_003"
+  },
+  {
+    "content": "客户收货时间窗默认允许提前 15 分钟、延后 10 分钟。预计迟到超过 10 分钟时，系统需要同时通知调度员、司机和客户联系人。",
+    "role": "user",
+    "scene_id": "logistics-test",
+    "task_id": "log_delivery_003"
+  },
+  {
+    "content": "司机分配优先考虑驾驶证类型、当日累计工时、熟悉区域和历史准时率。连续驾驶达到 4 小时后必须安排至少 20 分钟休息。",
+    "role": "user",
+    "scene_id": "logistics-test",
+    "task_id": "log_delivery_003"
+  },
+  {
+    "content": "遇到车辆故障时，司机先在移动端上报故障等级和位置。调度中心应在 5 分钟内确认，一级故障必须在 15 分钟内安排备用车辆接驳。",
+    "role": "user",
+    "scene_id": "logistics-test",
+    "task_id": "log_delivery_003"
+  },
+  {
+    "content": "配送业务重点考核准时率、签收完整率、单位订单里程和温控合格率。月度目标分别为 98%、99.5%、不高于 8 公里和 99.8%。",
+    "role": "user",
+    "scene_id": "logistics-test",
+    "task_id": "log_delivery_003"
+  },
+  {
+    "content": "冷链运输轨迹和温度数据至少保存 730 天，内容包括车辆位置、采集时间、货厢温度、设备编号和告警处理记录，任何人不得手工覆盖原始数据。",
+    "role": "user",
+    "scene_id": "logistics-test",
+    "task_id": "log_compliance_004"
+  },
+  {
+    "content": "温控一级告警由司机处理，二级告警同步通知调度主管，三级告警还需通知质量负责人。三级告警必须在 30 分钟内形成书面处置记录。",
+    "role": "user",
+    "scene_id": "logistics-test",
+    "task_id": "log_compliance_004"
+  },
+  {
+    "content": "运输数据采用角色权限控制：司机只能查看本人车辆和当日任务，调度员可查看所属站点，质量负责人可查询全部温控记录但不能修改运输轨迹。",
+    "role": "user",
+    "scene_id": "logistics-test",
+    "task_id": "log_compliance_004"
+  },
+  {
+    "content": "每月 3 日前生成上月冷链合规报告，报告包含温控合格率、告警次数、平均处置时间、轨迹缺失率和责任部门，质量负责人审核后归档。",
+    "role": "user",
+    "scene_id": "logistics-test",
+    "task_id": "log_compliance_004"
+  },
+  {
+    "content": "监管抽查需要在 15 分钟内导出指定订单的完整证据链，包括入库批次、出库复核、车辆轨迹、温度曲线、签收凭证和异常处置记录。",
+    "role": "user",
+    "scene_id": "logistics-test",
+    "task_id": "log_compliance_004"
+  }
+]

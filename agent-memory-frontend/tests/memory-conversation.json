@@ -1,0 +1,8 @@
+[
+  {
+    "content": "线上故障分为 P1、P2、P3 和 P4 四级。P1 表示核心服务完全不可用，要求 5 分钟内响应、15 分钟内建立应急群，并每 20 分钟同步一次进展。",
+    "role": "user",
+    "scene_id": "ops-test",
+    "task_id": "ops_incident_001"
+  }
+]

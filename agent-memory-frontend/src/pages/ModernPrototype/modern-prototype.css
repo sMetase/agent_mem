@@ -1,0 +1,311 @@
+/* Modern Prototype Styles */
+
+.modern-prototype-page {
+  min-height: 100vh;
+  background: var(--modern-background);
+  padding: var(--modern-spacing-xl);
+}
+
+.modern-page-header {
+  margin-bottom: var(--modern-spacing-2xl);
+  text-align: center;
+}
+
+.modern-eyebrow {
+  display: inline-block;
+  padding: 4px 12px;
+  margin-bottom: var(--modern-spacing-md);
+  border-radius: var(--modern-radius-full);
+  background: var(--modern-primary-soft);
+  color: var(--modern-primary);
+  font-size: 11px;
+  font-weight: var(--modern-font-semibold);
+  letter-spacing: 0.8px;
+  text-transform: uppercase;
+}
+
+.modern-page-title {
+  margin: 0 0 var(--modern-spacing-sm) !important;
+  font-family: var(--modern-font-display) !important;
+  font-size: var(--modern-text-display-lg) !important;
+  font-weight: var(--modern-font-regular) !important;
+  line-height: var(--modern-text-display-lg-lh) !important;
+  letter-spacing: -0.02em !important;
+  color: var(--modern-foreground) !important;
+}
+
+.modern-page-title em {
+  font-style: italic;
+  color: var(--modern-primary);
+}
+
+.modern-page-subtitle {
+  display: block;
+  font-size: var(--modern-text-body-lg);
+  font-weight: var(--modern-font-light);
+  color: var(--modern-muted);
+}
+
+.modern-card {
+  border: 1px solid var(--modern-border) !important;
+  border-radius: var(--modern-radius-lg) !important;
+  background: var(--modern-surface) !important;
+  box-shadow: var(--modern-shadow-sm) !important;
+  transition: box-shadow 250ms ease, transform 250ms ease !important;
+}
+
+.modern-card:hover {
+  box-shadow: var(--modern-shadow-md) !important;
+  transform: translateY(-1px);
+}
+
+.modern-metric-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(150px, 1fr));
+  gap: var(--modern-spacing-md);
+}
+
+.modern-metric-card {
+  position: relative;
+  overflow: hidden;
+}
+
+.modern-metric-card::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background: linear-gradient(90deg, var(--modern-primary), transparent);
+  opacity: 0;
+  transition: opacity 250ms ease;
+}
+
+.modern-metric-card:hover::before {
+  opacity: 1;
+}
+
+.modern-metric-icon {
+  width: 44px;
+  height: 44px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--modern-radius-lg);
+  color: white;
+  font-size: 22px;
+  box-shadow: var(--modern-shadow-primary);
+  transition: transform 150ms ease;
+}
+
+.modern-metric-card:hover .modern-metric-icon {
+  transform: scale(1.05);
+}
+
+.modern-metric-label {
+  display: block;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--modern-muted);
+}
+
+.modern-metric-value {
+  margin: 0 !important;
+  font-size: 24px !important;
+  font-weight: 700 !important;
+  font-variant-numeric: tabular-nums;
+  color: var(--modern-foreground) !important;
+}
+
+.modern-metric-note {
+  display: block;
+  margin-top: 12px;
+  font-size: 11px;
+  color: var(--modern-muted-foreground);
+}
+
+.modern-mini-trend {
+  width: 80px;
+  height: 36px;
+  overflow: visible;
+  filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.08));
+}
+
+.modern-flow-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 30px;
+}
+
+.modern-flow-item-wrap {
+  position: relative;
+}
+
+.modern-flow-item {
+  position: relative;
+  min-height: 96px;
+  display: grid;
+  grid-template-columns: 36px minmax(0, 1fr);
+  align-items: center;
+  gap: 6px 12px;
+  padding: 16px;
+  border: 1px solid;
+  border-radius: var(--modern-radius-xl);
+  transition: transform 250ms ease, box-shadow 250ms ease;
+}
+
+.modern-flow-item:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--modern-shadow-lg);
+}
+
+.modern-flow-number {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  width: 26px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  border-radius: 999px;
+  color: white;
+  font-size: 13px;
+  font-weight: 700;
+  box-shadow: var(--modern-shadow-sm);
+}
+
+.modern-flow-icon {
+  grid-row: 1;
+  margin-top: 32px;
+  text-align: center;
+  font-size: 28px;
+}
+
+.modern-flow-arrow {
+  position: absolute;
+  top: 50%;
+  right: -20px;
+  width: 24px;
+  height: 24px;
+  color: var(--modern-muted);
+  transform: translateY(-50%);
+  animation: arrowPulse 2s ease-in-out infinite;
+}
+
+@keyframes arrowPulse {
+  0%, 100% { opacity: 0.5; transform: translateY(-50%) translateX(0); }
+  50% { opacity: 1; transform: translateY(-50%) translateX(3px); }
+}
+
+.modern-dashboard-panel {
+  min-height: 300px;
+}
+
+.modern-memory-layer {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--modern-border-subtle);
+  border-radius: var(--modern-radius-md);
+  background: var(--modern-surface-elevated);
+  transition: all 150ms ease;
+}
+
+.modern-memory-layer:hover {
+  border-color: var(--modern-border);
+  box-shadow: var(--modern-shadow-xs);
+  transform: translateX(2px);
+}
+
+.modern-memory-layer > span {
+  width: 4px;
+  height: 36px;
+  border-radius: 999px;
+}
+
+.modern-pipeline-workflow {
+  padding: 6px 0 18px;
+}
+
+.modern-pipeline-lane {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 20px;
+}
+
+.modern-pipeline-stage {
+  width: 100%;
+  min-height: 84px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 12px 8px;
+  border: 1px solid;
+  border-radius: var(--modern-radius-lg);
+  transition: all 250ms ease;
+}
+
+.modern-pipeline-stage:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--modern-shadow-md);
+}
+
+.modern-pipeline-connector {
+  position: absolute;
+  top: 50%;
+  right: -14px;
+  transform: translateY(-50%);
+}
+
+.modern-pulse-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--modern-primary);
+  animation: pulse 2s ease infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+.modern-context-code {
+  min-height: 200px;
+  padding: 18px;
+  border-radius: var(--modern-radius-md);
+  color: #A5D6A7;
+  background: var(--modern-dark-surface);
+  font-family: var(--modern-font-mono);
+  font-size: 12px;
+  line-height: 1.8;
+}
+
+.modern-bar-line {
+  margin: 10px 0;
+}
+
+@media (max-width: 1199px) {
+  .modern-metric-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .modern-flow-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .modern-flow-arrow {
+    display: none;
+  }
+}
+
+@media (max-width: 575px) {
+  .modern-metric-grid,
+  .modern-flow-grid {
+    grid-template-columns: 1fr;
+  }
+  .modern-prototype-page {
+    padding: var(--modern-spacing-md);
+  }
+}

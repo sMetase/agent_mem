@@ -1,0 +1,122 @@
+[
+  {
+    "content": "客户申请未发货订单退款时，系统可以自动审核并原路退回；已发货订单必须先拒收或完成退货入库，客服不能直接跳过物流状态。",
+    "role": "user",
+    "scene_id": "customer-service-test",
+    "task_id": "cs_refund_001"
+  },
+  {
+    "content": "普通商品支持签收后 7 天无理由退货，生鲜、定制和已拆封数字商品不适用无理由退货。质量问题需要客户上传照片或视频作为凭证。",
+    "role": "user",
+    "scene_id": "customer-service-test",
+    "task_id": "cs_refund_001"
+  },
+  {
+    "content": "退款到账时间按支付方式区分：余额支付实时到账，银行卡预计 1 至 3 个工作日，信用卡预计 3 至 7 个工作日，跨境支付最长 10 个工作日。",
+    "role": "user",
+    "scene_id": "customer-service-test",
+    "task_id": "cs_refund_001"
+  },
+  {
+    "content": "退款金额超过 5000 元或同一用户 30 天内退款超过 3 次时，需要风控专员复核。复核期间订单状态显示为退款审核中。",
+    "role": "user",
+    "scene_id": "customer-service-test",
+    "task_id": "cs_refund_001"
+  },
+  {
+    "content": "退货仓确认收货后应在 24 小时内完成商品质检。质检通过后自动退款，质检不通过时必须记录原因并向客户提供至少两张现场照片。",
+    "role": "user",
+    "scene_id": "customer-service-test",
+    "task_id": "cs_refund_001"
+  },
+  {
+    "content": "标准快递订单承诺 48 小时内发货，预售商品按照商品页约定日期发货。超过承诺时间仍未出库时，系统自动发放 10 元无门槛优惠券。",
+    "role": "user",
+    "scene_id": "customer-service-test",
+    "task_id": "cs_delivery_002"
+  },
+  {
+    "content": "物流轨迹连续 24 小时没有更新时标记为停滞，连续 48 小时没有更新时自动创建物流工单，并要求承运商在 4 小时内回复。",
+    "role": "user",
+    "scene_id": "customer-service-test",
+    "task_id": "cs_delivery_002"
+  },
+  {
+    "content": "客户修改收货地址必须在订单出库前完成。订单出库后只能由承运商评估改址，可能产生的转寄费用需要客户确认后支付。",
+    "role": "user",
+    "scene_id": "customer-service-test",
+    "task_id": "cs_delivery_002"
+  },
+  {
+    "content": "物流显示已签收但客户未收到时，客服先核对签收照片、签收人和定位信息。无法确认的订单在 2 小时内升级给物流专员调查。",
+    "role": "user",
+    "scene_id": "customer-service-test",
+    "task_id": "cs_delivery_002"
+  },
+  {
+    "content": "同城即时配送以 60 分钟为目标时效，骑手接单后 10 分钟内未到店属于异常。恶劣天气期间预计时效可以延长 30 分钟并提前通知客户。",
+    "role": "user",
+    "scene_id": "customer-service-test",
+    "task_id": "cs_delivery_002"
+  },
+  {
+    "content": "会员等级分为普通、银卡、金卡和黑金四级，近 12 个月成长值分别达到 0、2000、8000 和 20000 时升级，等级有效期为一年。",
+    "role": "user",
+    "scene_id": "customer-service-test",
+    "task_id": "cs_membership_003"
+  },
+  {
+    "content": "积分按照实际支付金额每 1 元积 1 分计算，积分有效期到获得后的第二年 12 月 31 日。退款时对应订单产生的积分会同步扣回。",
+    "role": "user",
+    "scene_id": "customer-service-test",
+    "task_id": "cs_membership_003"
+  },
+  {
+    "content": "金卡会员享受每月两张运费券和生日月双倍积分，黑金会员额外享受专属客服、每月一次免费退货上门取件和新品优先购。",
+    "role": "user",
+    "scene_id": "customer-service-test",
+    "task_id": "cs_membership_003"
+  },
+  {
+    "content": "会员账户手机号可以修改，但必须验证原手机号或完成实名人工审核。一个手机号最多绑定一个会员账户，账户之间不能直接合并积分。",
+    "role": "user",
+    "scene_id": "customer-service-test",
+    "task_id": "cs_membership_003"
+  },
+  {
+    "content": "异常刷积分包括短时间高频下单退款、虚假交易和利用系统漏洞。系统确认违规后冻结相关积分 30 天，人工复核通过后才能恢复。",
+    "role": "user",
+    "scene_id": "customer-service-test",
+    "task_id": "cs_membership_003"
+  },
+  {
+    "content": "普通投诉由一线客服在 30 分钟内首次响应，重大投诉由值班主管在 10 分钟内接管。涉及人身安全或媒体曝光的事件立即升级为最高优先级。",
+    "role": "user",
+    "scene_id": "customer-service-test",
+    "task_id": "cs_complaint_004"
+  },
+  {
+    "content": "投诉工单必须记录客户诉求、订单编号、责任环节、沟通记录和处理方案。关闭工单前需要客户确认，无法联系客户时至少完成三次不同时间段的联系尝试。",
+    "role": "user",
+    "scene_id": "customer-service-test",
+    "task_id": "cs_complaint_004"
+  },
+  {
+    "content": "客服补偿权限分三级：一线客服最高 50 元，班组长最高 200 元，超过 200 元需要客服经理审批。现金补偿不得使用个人账户转账。",
+    "role": "user",
+    "scene_id": "customer-service-test",
+    "task_id": "cs_complaint_004"
+  },
+  {
+    "content": "投诉处理目标是普通工单 24 小时内解决、复杂工单 72 小时内解决。超过时限未完成时，系统每 4 小时提醒一次负责人和直属主管。",
+    "role": "user",
+    "scene_id": "customer-service-test",
+    "task_id": "cs_complaint_004"
+  },
+  {
+    "content": "每周一生成投诉分析报告，统计投诉类型、责任部门、首次响应时长、解决时长和客户满意度。连续两周排名前三的问题必须制定专项改进计划。",
+    "role": "user",
+    "scene_id": "customer-service-test",
+    "task_id": "cs_complaint_004"
+  }
+]

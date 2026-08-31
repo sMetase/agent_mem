@@ -1,0 +1,242 @@
+[
+  {
+    "id": "Q01",
+    "category": "短问题-简单",
+    "query": "路线优化项目使用什么技术栈？",
+    "expected_scene_id": "logistics-test",
+    "expected_task_id": "log_route_001",
+    "expected_keywords": ["Python 3.12", "FastAPI", "PostgreSQL 16", "OR-Tools"],
+    "top_k": 5,
+    "expected_min_hits": 1
+  },
+  {
+    "id": "Q02",
+    "category": "长问题-复杂",
+    "query": "济南冷链路线优化任务目前完成到什么阶段，下一步要做什么，并且高峰和普通时段分别采用什么调度目标？",
+    "expected_scene_id": "logistics-test",
+    "expected_task_id": "log_route_001",
+    "expected_keywords": ["数据清洗", "车辆路径算法", "接口联调", "准时率", "运输成本"],
+    "top_k": 5,
+    "expected_min_hits": 2
+  },
+  {
+    "id": "Q03",
+    "category": "短问题-简单",
+    "query": "冷链运输允许的温度范围是多少？",
+    "expected_scene_id": "logistics-test",
+    "expected_task_id": "log_route_001",
+    "expected_keywords": ["2 至 8 摄氏度", "5 分钟", "一级告警"],
+    "top_k": 5,
+    "expected_min_hits": 1
+  },
+  {
+    "id": "Q04",
+    "category": "长问题-复杂",
+    "query": "仓库对高周转商品如何设置安全库存和补货上限，日常盘点与异常审核又有什么时间和差异率要求？",
+    "expected_scene_id": "logistics-test",
+    "expected_task_id": "log_warehouse_002",
+    "expected_keywords": ["300 件", "800 件", "22:00", "0.5%", "12:00"],
+    "top_k": 5,
+    "expected_min_hits": 2
+  },
+  {
+    "id": "Q05",
+    "category": "短问题-简单",
+    "query": "配送车辆出发前检查哪些项目？",
+    "expected_scene_id": "logistics-test",
+    "expected_task_id": "log_delivery_003",
+    "expected_keywords": ["油量", "制冷机", "车门密封", "定位设备"],
+    "top_k": 5,
+    "expected_min_hits": 1
+  },
+  {
+    "id": "Q06",
+    "category": "长问题-复杂",
+    "query": "如果车辆在配送途中发生一级故障，司机和调度中心应该怎样处理，分别有哪些时间限制？",
+    "expected_scene_id": "logistics-test",
+    "expected_task_id": "log_delivery_003",
+    "expected_keywords": ["故障等级", "位置", "5 分钟", "15 分钟", "备用车辆"],
+    "top_k": 5,
+    "expected_min_hits": 1
+  },
+  {
+    "id": "Q07",
+    "category": "短问题-简单",
+    "query": "冷链轨迹和温度数据保存多久？",
+    "expected_scene_id": "logistics-test",
+    "expected_task_id": "log_compliance_004",
+    "expected_keywords": ["730 天", "车辆位置", "货厢温度"],
+    "top_k": 5,
+    "expected_min_hits": 1
+  },
+  {
+    "id": "Q08",
+    "category": "长问题-复杂",
+    "query": "面对监管抽查，系统需要多快导出证据链，证据链中要包含哪些仓储、运输、温控和签收资料？",
+    "expected_scene_id": "logistics-test",
+    "expected_task_id": "log_compliance_004",
+    "expected_keywords": ["15 分钟", "入库批次", "出库复核", "车辆轨迹", "温度曲线", "签收凭证"],
+    "top_k": 5,
+    "expected_min_hits": 2
+  },
+  {
+    "id": "Q09",
+    "category": "短问题-简单",
+    "query": "银行卡退款多久能到账？",
+    "expected_scene_id": "customer-service-test",
+    "expected_task_id": "cs_refund_001",
+    "expected_keywords": ["1 至 3 个工作日"],
+    "top_k": 5,
+    "expected_min_hits": 1
+  },
+  {
+    "id": "Q10",
+    "category": "长问题-复杂",
+    "query": "什么情况下退款需要风控复核，退货入库后的质检和退款处理分别有什么时间要求？",
+    "expected_scene_id": "customer-service-test",
+    "expected_task_id": "cs_refund_001",
+    "expected_keywords": ["5000 元", "30 天内", "3 次", "24 小时", "自动退款"],
+    "top_k": 5,
+    "expected_min_hits": 2
+  },
+  {
+    "id": "Q11",
+    "category": "短问题-简单",
+    "query": "物流多久不更新会自动创建工单？",
+    "expected_scene_id": "customer-service-test",
+    "expected_task_id": "cs_delivery_002",
+    "expected_keywords": ["48 小时", "物流工单", "4 小时"],
+    "top_k": 5,
+    "expected_min_hits": 1
+  },
+  {
+    "id": "Q12",
+    "category": "长问题-复杂",
+    "query": "订单显示已签收但客户没有收到时，客服应核对哪些证据，无法确认后应该在多长时间内升级给谁？",
+    "expected_scene_id": "customer-service-test",
+    "expected_task_id": "cs_delivery_002",
+    "expected_keywords": ["签收照片", "签收人", "定位信息", "2 小时", "物流专员"],
+    "top_k": 5,
+    "expected_min_hits": 1
+  },
+  {
+    "id": "Q13",
+    "category": "短问题-简单",
+    "query": "黑金会员有哪些额外权益？",
+    "expected_scene_id": "customer-service-test",
+    "expected_task_id": "cs_membership_003",
+    "expected_keywords": ["专属客服", "免费退货上门取件", "新品优先购"],
+    "top_k": 5,
+    "expected_min_hits": 1
+  },
+  {
+    "id": "Q14",
+    "category": "长问题-复杂",
+    "query": "会员积分如何获得、何时过期，订单退款以及异常刷积分时系统分别怎么处理？",
+    "expected_scene_id": "customer-service-test",
+    "expected_task_id": "cs_membership_003",
+    "expected_keywords": ["每 1 元积 1 分", "第二年 12 月 31 日", "扣回", "冻结", "30 天"],
+    "top_k": 5,
+    "expected_min_hits": 2
+  },
+  {
+    "id": "Q15",
+    "category": "短问题-简单",
+    "query": "一线客服最高可以补偿多少钱？",
+    "expected_scene_id": "customer-service-test",
+    "expected_task_id": "cs_complaint_004",
+    "expected_keywords": ["50 元"],
+    "top_k": 5,
+    "expected_min_hits": 1
+  },
+  {
+    "id": "Q16",
+    "category": "长问题-复杂",
+    "query": "普通和复杂投诉各自需要多久解决，如果超过时限系统怎样提醒，关闭工单前还必须完成什么步骤？",
+    "expected_scene_id": "customer-service-test",
+    "expected_task_id": "cs_complaint_004",
+    "expected_keywords": ["24 小时", "72 小时", "每 4 小时", "客户确认", "三次"],
+    "top_k": 5,
+    "expected_min_hits": 2
+  },
+  {
+    "id": "Q17",
+    "category": "短问题-简单",
+    "query": "P1 故障多久响应？",
+    "expected_scene_id": "ops-test",
+    "expected_task_id": "ops_incident_001",
+    "expected_keywords": ["5 分钟", "15 分钟", "20 分钟"],
+    "top_k": 5,
+    "expected_min_hits": 1
+  },
+  {
+    "id": "Q18",
+    "category": "长问题-复杂",
+    "query": "P1 故障发生后由哪些角色负责指挥、评估、修复和对外沟通，完成哪些条件后才能正式关闭故障？",
+    "expected_scene_id": "ops-test",
+    "expected_task_id": "ops_incident_001",
+    "expected_keywords": ["SRE", "业务负责人", "研发负责人", "客服负责人", "恢复 30 分钟", "告警清零"],
+    "top_k": 5,
+    "expected_min_hits": 2
+  },
+  {
+    "id": "Q19",
+    "category": "短问题-简单",
+    "query": "灰度发布分为哪几个阶段？",
+    "expected_scene_id": "ops-test",
+    "expected_task_id": "ops_release_002",
+    "expected_keywords": ["5%", "20%", "50%", "100%"],
+    "top_k": 5,
+    "expected_min_hits": 1
+  },
+  {
+    "id": "Q20",
+    "category": "长问题-复杂",
+    "query": "生产发布前需要通过哪些质量检查，灰度过程中哪些指标变化会停止放量，发布完成后又要观察哪些运行指标？",
+    "expected_scene_id": "ops-test",
+    "expected_task_id": "ops_release_002",
+    "expected_keywords": ["单元测试", "安全扫描", "80%", "错误率", "P95 延迟", "CPU", "核心业务成功率"],
+    "top_k": 5,
+    "expected_min_hits": 3
+  },
+  {
+    "id": "Q21",
+    "category": "短问题-简单",
+    "query": "数据库备份保留多久？",
+    "expected_scene_id": "ops-test",
+    "expected_task_id": "ops_database_003",
+    "expected_keywords": ["全量备份", "90 天", "增量备份", "30 天"],
+    "top_k": 5,
+    "expected_min_hits": 1
+  },
+  {
+    "id": "Q22",
+    "category": "长问题-复杂",
+    "query": "数据库灾备的 RPO 和 RTO 目标分别是多少，恢复演练要验证哪些核心数据，同时连接池达到什么条件会告警？",
+    "expected_scene_id": "ops-test",
+    "expected_task_id": "ops_database_003",
+    "expected_keywords": ["15 分钟", "60 分钟", "订单", "用户", "支付", "80%", "10 分钟"],
+    "top_k": 5,
+    "expected_min_hits": 2
+  },
+  {
+    "id": "Q23",
+    "category": "短问题-简单",
+    "query": "API 密钥多久轮换一次？",
+    "expected_scene_id": "ops-test",
+    "expected_task_id": "ops_security_004",
+    "expected_keywords": ["90 天", "15 分钟", "吊销"],
+    "top_k": 5,
+    "expected_min_hits": 1
+  },
+  {
+    "id": "Q24",
+    "category": "长问题-复杂",
+    "query": "如果需要导出一万条以上用户数据，要经过哪些审批和保护措施，下载行为如何留痕，相关安全日志需要保存多久？",
+    "expected_scene_id": "ops-test",
+    "expected_task_id": "ops_security_004",
+    "expected_keywords": ["双重审批", "加密", "24 小时", "审计日志", "365 天"],
+    "top_k": 5,
+    "expected_min_hits": 2
+  }
+]

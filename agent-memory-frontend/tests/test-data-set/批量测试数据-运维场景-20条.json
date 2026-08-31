@@ -1,0 +1,122 @@
+[
+  {
+    "content": "线上故障分为 P1、P2、P3 和 P4 四级。P1 表示核心服务完全不可用，要求 5 分钟内响应、15 分钟内建立应急群，并每 20 分钟同步一次进展。",
+    "role": "user",
+    "scene_id": "ops-test",
+    "task_id": "ops_incident_001"
+  },
+  {
+    "content": "发生 P1 故障时由当班 SRE 担任现场指挥，业务负责人评估用户影响，研发负责人组织修复，客服负责人统一对外说明，其他人员不得自行发布消息。",
+    "role": "user",
+    "scene_id": "ops-test",
+    "task_id": "ops_incident_001"
+  },
+  {
+    "content": "故障止损优先级依次为流量切换、功能降级、版本回滚和紧急修复。未经现场指挥确认，不得同时执行两个可能相互影响的变更。",
+    "role": "user",
+    "scene_id": "ops-test",
+    "task_id": "ops_incident_001"
+  },
+  {
+    "content": "P1 和 P2 故障必须在恢复后 48 小时内完成复盘，复盘内容包括时间线、根因、影响范围、有效措施、无效操作和改进负责人。",
+    "role": "user",
+    "scene_id": "ops-test",
+    "task_id": "ops_incident_001"
+  },
+  {
+    "content": "故障关闭条件包括核心指标恢复 30 分钟、积压任务处理完成、用户影响停止扩大和监控告警清零。仅恢复接口访问不能直接关闭故障。",
+    "role": "user",
+    "scene_id": "ops-test",
+    "task_id": "ops_incident_001"
+  },
+  {
+    "content": "生产环境常规发布窗口为每周二和周四 20:00 至 22:00，节假日前一个工作日禁止常规发布。紧急发布需要技术负责人和业务负责人共同批准。",
+    "role": "user",
+    "scene_id": "ops-test",
+    "task_id": "ops_release_002"
+  },
+  {
+    "content": "发布前必须通过单元测试、接口测试、安全扫描和预发布验证，代码覆盖率不得低于 80%，高危漏洞数量必须为零。",
+    "role": "user",
+    "scene_id": "ops-test",
+    "task_id": "ops_release_002"
+  },
+  {
+    "content": "灰度发布按 5%、20%、50% 和 100% 四个阶段放量，每个阶段至少观察 15 分钟。错误率上升超过 1 个百分点或 P95 延迟增加 30% 时立即停止放量。",
+    "role": "user",
+    "scene_id": "ops-test",
+    "task_id": "ops_release_002"
+  },
+  {
+    "content": "每次发布必须准备可执行的回滚方案，数据库变更优先采用向前兼容设计。回滚操作应在 10 分钟内完成，并保留执行人和命令记录。",
+    "role": "user",
+    "scene_id": "ops-test",
+    "task_id": "ops_release_002"
+  },
+  {
+    "content": "发布完成后观察 30 分钟，检查错误率、吞吐量、P95 延迟、CPU、内存和核心业务成功率。所有指标稳定后才能关闭发布单。",
+    "role": "user",
+    "scene_id": "ops-test",
+    "task_id": "ops_release_002"
+  },
+  {
+    "content": "生产 PostgreSQL 数据库每周日执行一次全量备份，每 6 小时执行一次增量备份，事务日志连续归档。全量备份保留 90 天，增量备份保留 30 天。",
+    "role": "user",
+    "scene_id": "ops-test",
+    "task_id": "ops_database_003"
+  },
+  {
+    "content": "数据库恢复目标为 RPO 不超过 15 分钟、RTO 不超过 60 分钟。每季度至少执行一次恢复演练，并验证订单、用户和支付三类核心表的数据一致性。",
+    "role": "user",
+    "scene_id": "ops-test",
+    "task_id": "ops_database_003"
+  },
+  {
+    "content": "慢查询定义为执行时间超过 500 毫秒。单条 SQL 每分钟执行超过 100 次且平均耗时超过 300 毫秒时，也会进入重点优化列表。",
+    "role": "user",
+    "scene_id": "ops-test",
+    "task_id": "ops_database_003"
+  },
+  {
+    "content": "数据库连接池最大连接数为 200，应用实例默认最多使用 30 个连接。连接使用率连续 10 分钟超过 80% 时触发容量告警。",
+    "role": "user",
+    "scene_id": "ops-test",
+    "task_id": "ops_database_003"
+  },
+  {
+    "content": "涉及大表结构变更时必须使用在线变更工具，并在执行前评估磁盘、锁等待和复制延迟。生产环境禁止直接执行无条件全表更新。",
+    "role": "user",
+    "scene_id": "ops-test",
+    "task_id": "ops_database_003"
+  },
+  {
+    "content": "员工账户启用多因素认证，连续 5 次登录失败后锁定 30 分钟。生产权限按最小权限原则发放，临时权限默认 8 小时后自动失效。",
+    "role": "user",
+    "scene_id": "ops-test",
+    "task_id": "ops_security_004"
+  },
+  {
+    "content": "API 密钥不得写入源代码或聊天记录，统一存放在密钥管理系统中。密钥每 90 天轮换一次，发现泄露后必须在 15 分钟内吊销。",
+    "role": "user",
+    "scene_id": "ops-test",
+    "task_id": "ops_security_004"
+  },
+  {
+    "content": "安全日志至少保存 365 天，内容包括登录、权限变更、密钥操作、数据导出和高风险管理命令。日志平台只允许追加，不允许普通管理员删除。",
+    "role": "user",
+    "scene_id": "ops-test",
+    "task_id": "ops_security_004"
+  },
+  {
+    "content": "漏洞按照严重程度规定修复时限：严重漏洞 24 小时、高危漏洞 3 天、中危漏洞 14 天、低危漏洞 30 天。无法按时修复必须提交风险接受审批。",
+    "role": "user",
+    "scene_id": "ops-test",
+    "task_id": "ops_security_004"
+  },
+  {
+    "content": "导出超过 10000 条用户数据需要部门负责人和安全负责人双重审批，导出文件必须加密并设置 24 小时有效期，下载行为需要记录审计日志。",
+    "role": "user",
+    "scene_id": "ops-test",
+    "task_id": "ops_security_004"
+  }
+]

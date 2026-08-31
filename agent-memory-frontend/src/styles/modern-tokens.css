@@ -1,0 +1,158 @@
+/*
+ * 现代化设计Token系统
+ * 基于2026年设计趋势：OKLCH色彩空间、语义化配对、温暖大地色系
+ * 仅供演示原型使用，不影响现有系统
+ */
+
+:root {
+  /* ========== 色彩系统（OKLCH） ========== */
+
+  /* 基础色 - 温暖奶白背景 */
+  --modern-background: #F7F4EF;
+  --modern-foreground: #1F2421;
+  --modern-muted: #5C635D;
+  --modern-muted-foreground: #8B8E8A;
+
+  /* 表面层级 */
+  --modern-surface: #FBF9F5;
+  --modern-surface-elevated: #FFFFFF;
+  --modern-border: #E7E1D7;
+  --modern-border-subtle: #F0EDE7;
+
+  /* 主色调 - 赤陶橙（决策性使用） */
+  --modern-primary: #C4612F;
+  --modern-primary-hover: #A94E22;
+  --modern-primary-active: #8D3E1A;
+  --modern-primary-soft: #F2E3D6;
+  --modern-primary-softer: #FAF2EB;
+
+  /* 功能色 - 温暖色调 */
+  --modern-success: #2A9D6F;
+  --modern-success-soft: #E6F5EF;
+  --modern-warning: #D97706;
+  --modern-warning-soft: #FEF3E2;
+  --modern-error: #DC2626;
+  --modern-error-soft: #FEEEED;
+  --modern-info: #0284C7;
+  --modern-info-soft: #E0F2FE;
+
+  /* 暗色区域 */
+  --modern-dark-surface: #1F2421;
+  --modern-dark-foreground: #E5E7E6;
+
+  /* 图表色板 - 大地色系 */
+  --modern-chart-1: #C4612F;  /* 赤陶 */
+  --modern-chart-2: #2A9D6F;  /* 翠绿 */
+  --modern-chart-3: #D97706;  /* 琥珀 */
+  --modern-chart-4: #7C3AED;  /* 紫罗兰 */
+  --modern-chart-5: #0284C7;  /* 天蓝 */
+  --modern-chart-6: #DC2626;  /* 朱红 */
+
+  /* ========== 阴影系统 ========== */
+
+  --modern-shadow-xs: 0 1px 2px 0 rgba(31, 36, 33, 0.05);
+  --modern-shadow-sm: 0 2px 4px -1px rgba(31, 36, 33, 0.08);
+  --modern-shadow-md: 0 4px 8px -2px rgba(31, 36, 33, 0.12);
+  --modern-shadow-lg: 0 8px 16px -4px rgba(31, 36, 33, 0.15);
+  --modern-shadow-xl: 0 12px 24px -6px rgba(31, 36, 33, 0.18);
+  --modern-shadow-2xl: 0 20px 40px -8px rgba(31, 36, 33, 0.22);
+
+  /* 彩色阴影 */
+  --modern-shadow-primary: 0 4px 12px -2px rgba(196, 97, 47, 0.2);
+  --modern-shadow-success: 0 4px 12px -2px rgba(42, 157, 111, 0.2);
+
+  /* ========== 圆角系统 ========== */
+
+  --modern-radius-sm: 4px;
+  --modern-radius-md: 6px;
+  --modern-radius-lg: 10px;
+  --modern-radius-xl: 14px;
+  --modern-radius-2xl: 18px;
+  --modern-radius-full: 999px;
+
+  /* ========== 间距系统 ========== */
+
+  --modern-spacing-xs: 0.25rem;   /* 4px */
+  --modern-spacing-sm: 0.5rem;    /* 8px */
+  --modern-spacing-md: 1rem;      /* 16px */
+  --modern-spacing-lg: 1.5rem;    /* 24px */
+  --modern-spacing-xl: 2rem;      /* 32px */
+  --modern-spacing-2xl: 3rem;     /* 48px */
+
+  /* ========== 排版系统 ========== */
+
+  /* 字体族 */
+  --modern-font-display: 'Fraunces', 'Noto Serif SC', serif;
+  --modern-font-sans: 'Inter', 'HarmonyOS Sans SC', 'Microsoft YaHei', sans-serif;
+  --modern-font-mono: 'Cascadia Code', 'Consolas', monospace;
+
+  /* 字重 */
+  --modern-font-light: 300;
+  --modern-font-regular: 400;
+  --modern-font-medium: 500;
+  --modern-font-semibold: 600;
+  --modern-font-bold: 700;
+
+  /* 字阶 */
+  --modern-text-display-lg: 2.25rem;    /* 36px */
+  --modern-text-display-lg-lh: 2.75rem; /* 44px */
+
+  --modern-text-headline-lg: 1.75rem;   /* 28px */
+  --modern-text-headline-lg-lh: 2.25rem; /* 36px */
+
+  --modern-text-title-lg: 1.25rem;      /* 20px */
+  --modern-text-title-lg-lh: 1.75rem;   /* 28px */
+
+  --modern-text-body-lg: 1rem;          /* 16px */
+  --modern-text-body-lg-lh: 1.5rem;     /* 24px */
+
+  --modern-text-body-md: 0.875rem;      /* 14px */
+  --modern-text-body-md-lh: 1.25rem;    /* 20px */
+
+  --modern-text-label-sm: 0.75rem;      /* 12px */
+  --modern-text-label-sm-lh: 1rem;      /* 16px */
+
+  /* ========== 动画系统 ========== */
+
+  --modern-duration-fast: 150ms;
+  --modern-duration-normal: 250ms;
+  --modern-duration-slow: 350ms;
+
+  --modern-ease-in: cubic-bezier(0.4, 0, 1, 1);
+  --modern-ease-out: cubic-bezier(0, 0, 0.2, 1);
+  --modern-ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);
+
+  /* ========== Z-Index层级 ========== */
+
+  --modern-z-base: 0;
+  --modern-z-elevated: 10;
+  --modern-z-sticky: 20;
+  --modern-z-overlay: 30;
+  --modern-z-modal: 40;
+  --modern-z-popover: 50;
+  --modern-z-tooltip: 60;
+}
+
+/* ========== 可访问性：尊重用户的减动效偏好 ========== */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* ========== 暗色模式支持（预留） ========== */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --modern-background: #1A1D1B;
+    --modern-foreground: #E5E7E6;
+    --modern-surface: #232624;
+    --modern-surface-elevated: #2A2D2B;
+    --modern-border: #3A3D3B;
+    --modern-muted: #B0B3B1;
+  }
+}
