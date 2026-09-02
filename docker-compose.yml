@@ -1,0 +1,172 @@
+# ============================================================
+# 智能体记忆系统 — Docker Compose 统一部署
+#
+# 说明：
+#   - 统一在仓库根目录管理配置
+#   - 提供前端、后端、数据库、消息队列统一编排
+#   - 统一使用 .env.example / .env
+#
+# 启动方式：
+#   cp .env.example .env
+#   docker compose up --build -d
+#
+# 服务端口：
+#   前端       8081
+#   后端       8000
+#   PostgreSQL 5433 -> 5432
+#   Qdrant     6333 / 6334
+#   Kafka      9092
+#   Kafka UI   8080
+# ============================================================
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: mem-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-memuser}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-mempassword}
+      POSTGRES_DB: ${POSTGRES_DB:-agent_memory}
+    ports:
+      - "${POSTGRES_PORT:-5433}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: mem-qdrant
+    restart: unless-stopped
+    ports:
+      - "${QDRANT_HTTP_PORT:-6333}:6333"
+      - "${QDRANT_GRPC_PORT:-6334}:6334"
+    volumes:
+      - qdrant_data:/qdrant/storage
+
+  redis:
+    image: redis:7-alpine
+    container_name: mem-redis
+    restart: unless-stopped
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+
+  kafka:
+    image: bitnami/kafka:3.7
+    container_name: mem-kafka
+    restart: unless-stopped
+    ports:
+      - "${KAFKA_PORT:-9092}:9092"
+      - "9093:9093"
+    environment:
+      KAFKA_CFG_NODE_ID: 0
+      KAFKA_CFG_PROCESS_ROLES: controller,broker
+      KAFKA_CFG_CONTROLLER_QUORUM_VOTERS: 0@kafka:9094
+      KAFKA_CFG_LISTENERS: EXTERNAL://:9092,INTERNAL://:9093,CONTROLLER://:9094
+      KAFKA_CFG_ADVERTISED_LISTENERS: EXTERNAL://localhost:9092,INTERNAL://kafka:9093
+      KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,EXTERNAL:PLAINTEXT,INTERNAL:PLAINTEXT
+      KAFKA_CFG_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_CFG_INTER_BROKER_LISTENER_NAME: INTERNAL
+      KAFKA_CFG_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_CFG_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_CFG_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_CFG_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_CFG_LOG_RETENTION_HOURS: 72
+    volumes:
+      - kafka_data:/bitnami/kafka
+
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    container_name: mem-kafka-ui
+    restart: unless-stopped
+    ports:
+      - "${KAFKA_UI_PORT:-8080}:8080"
+    environment:
+      KAFKA_CLUSTERS_0_NAME: local
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9093
+    depends_on:
+      - kafka
+
+  openmemory:
+    build:
+      context: ./mem0_repo/openmemory/api
+      dockerfile: Dockerfile
+    container_name: mem-openmemory
+    restart: unless-stopped
+    env_file:
+      - ./.env
+    depends_on:
+      - qdrant
+    environment:
+      QDRANT_HOST: ${QDRANT_HOST:-qdrant}
+      QDRANT_PORT: ${QDRANT_PORT:-6333}
+      LLM_PROVIDER: openai
+      LLM_MODEL: ${LLM_MODEL:-deepseek-chat}
+      LLM_API_KEY: ${DEEPSEEK_API_KEY}
+      LLM_BASE_URL: ${DEEPSEEK_BASE_URL:-https://api.deepseek.com/v1}
+      EMBEDDER_PROVIDER: openai
+      EMBEDDER_MODEL: ${EMBEDDER_MODEL:-BAAI/bge-m3}
+      EMBEDDER_API_KEY: ${SILICONFLOW_API_KEY}
+      EMBEDDER_BASE_URL: ${SILICONFLOW_BASE_URL:-https://api.siliconflow.cn/v1}
+      MCP_BASE_URL: ${MCP_BASE_URL:-http://openmemory:8765/mcp}
+    ports:
+      - "${OPENMEMORY_PORT:-8765}:8765"
+    command: uvicorn main:app --host 0.0.0.0 --port 8765
+
+  backend:
+    build:
+      context: ./memProject
+      dockerfile: Dockerfile
+    container_name: mem-backend
+    restart: unless-stopped
+    env_file:
+      - ./.env
+    environment:
+      DB_HOST: ${DB_HOST:-postgres}
+      DB_PORT: ${DB_PORT:-5432}
+      DB_USER: ${DB_USER:-memuser}
+      DB_PASSWORD: ${DB_PASSWORD:-mempassword}
+      DB_NAME: ${DB_NAME:-agent_memory}
+      QDRANT_HOST: ${QDRANT_HOST:-qdrant}
+      QDRANT_PORT: ${QDRANT_PORT:-6333}
+      KAFKA_BOOTSTRAP_SERVERS: ${KAFKA_BOOTSTRAP_SERVERS:-kafka:9093}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY}
+      DEEPSEEK_BASE_URL: ${DEEPSEEK_BASE_URL:-https://api.deepseek.com/v1}
+      LLM_MODEL: ${LLM_MODEL:-deepseek-chat}
+      SILICONFLOW_API_KEY: ${SILICONFLOW_API_KEY}
+      SILICONFLOW_BASE_URL: ${SILICONFLOW_BASE_URL:-https://api.siliconflow.cn/v1}
+      EMBEDDER_MODEL: ${EMBEDDER_MODEL:-BAAI/bge-m3}
+      SECRET_KEY: ${SECRET_KEY:-change-this-secret-key}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-change-this-jwt-secret}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      AUTH_ENABLED: ${AUTH_ENABLED:-false}
+      MCP_BASE_URL: ${MCP_BASE_URL:-http://openmemory:8765/mcp}
+    ports:
+      - "${BACKEND_PORT:-8000}:8000"
+    depends_on:
+      - postgres
+      - qdrant
+      - kafka
+      - redis
+      - openmemory
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 2
+
+  frontend:
+    build:
+      context: ./agent-memory-frontend
+      dockerfile: Dockerfile
+      args:
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://localhost:8000}
+        VITE_API_TIMEOUT_MS: ${VITE_API_TIMEOUT_MS:-30000}
+        VITE_APP_TITLE: ${VITE_APP_TITLE:-智能体记忆系统前端}
+    container_name: mem-frontend
+    restart: unless-stopped
+    ports:
+      - "${FRONTEND_PORT:-8081}:80"
+    depends_on:
+      - backend
+
+volumes:
+  pgdata:
+  qdrant_data:
+  kafka_data:

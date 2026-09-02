@@ -1,10 +1,11 @@
 # -*- coding: utf-8 -*-
 """
 MCP Client — 连接 OpenMemory MCP Server（Streamable HTTP）。
-Server 地址默认 http://localhost:8765
+支持本地开发模式和 Docker 容器模式。
 """
 
 import json
+import os
 from typing import Optional
 
 from fastmcp import Client
@@ -14,7 +15,9 @@ from app.core.logger import get_logger
 logger = get_logger("mcp_client")
 
 # OpenMemory MCP Server 地址
-MCP_BASE_URL = "http://localhost:8765/mcp"
+# 本地开发默认 http://localhost:8765/mcp
+# Docker/Compose 默认可通过环境变量传入，例如 http://openmemory:8765/mcp
+MCP_BASE_URL = os.getenv("MCP_BASE_URL", "http://localhost:8765/mcp")
 
 
 class McpClient:
