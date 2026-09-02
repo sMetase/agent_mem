@@ -1,4 +1,4 @@
-FROM node:20-alpine AS builder
+FROM node:24.20.0-alpine3.24 AS builder
 
 ARG VITE_API_BASE_URL=http://localhost:8000
 ARG VITE_API_TIMEOUT_MS=30000
