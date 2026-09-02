@@ -1,6 +1,6 @@
 aiofile==3.11.1
 aiokafka==0.14.0
-aiorun==2025.11.1
+aiorun
 alembic==1.18.5
 annotated-doc==0.0.4
 annotated-types==0.7.0
