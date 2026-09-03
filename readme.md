@@ -1,20 +1,37 @@
 # 智能体记忆系统依赖版本说明
 
-本文档整理了该项目当前使用到的核心依赖及其版本，版本依据来自：
+本文档整理了该项目当前使用到的 Docker 镜像、核心依赖及部署方式，版本依据来自：
 
-- memProject/docker-compose.yml
+- docker-compose.yml
+- memProject/Dockerfile
+- mem0_repo/openmemory/api/Dockerfile
+- agent-memory-frontend/Dockerfile
 - memProject/requirements.txt
 
-> 说明：Docker 镜像中有些组件使用的是 `latest`（如 Qdrant、Kafka UI），而 Python 侧依赖通常会固定版本号，因此实际运行环境建议以 `requirements.txt` 和容器镜像 tag 为准。
+> 说明：Qdrant 和 Kafka UI 使用 `latest`，构建时可能随时间更新；其余基础镜像使用明确版本或由本地 Dockerfile 构建。
 
-## 1. 容器/中间件依赖
+## 1. Docker 镜像清单
 
-| 组件 | 作用 | 版本/镜像 | 备注 |
+### 1.1 Compose 直接使用的镜像
+
+| 服务 | 镜像 | 作用 | 容器端口 |
 | --- | --- | --- | --- |
-| pgvector | 主数据库与向量扩展 | `pgvector/pgvector:pg16` | 端口映射 `5433:5432` |
-| Qdrant | 向量检索引擎 | `qdrant/qdrant:latest` | 端口映射 `6333:6333`、`6334:6334` |
-| Kafka | 消息总线 / 异步写入队列 | `bitnami/kafka:3.7` | 端口映射 `9092:9092` |
-| Kafka UI | Kafka 管理界面 | `provectuslabs/kafka-ui:latest` | 端口映射 `8080:8080` |
+| PostgreSQL | `pgvector/pgvector:pg16` | 主数据库与 pgvector 向量扩展 | `5433 -> 5432` |
+| Qdrant | `qdrant/qdrant:latest` | 向量检索引擎 | `6333 -> 6333`、`6334 -> 6334` |
+| Redis | `redis:7-alpine` | 缓存与结果轮询 | `6379 -> 6379` |
+| Kafka | `apache/kafka:3.7.2` | 消息总线与异步写入队列 | `9092 -> 9092`、`9093 -> 9093` |
+| Kafka UI | `provectuslabs/kafka-ui:latest` | Kafka 管理界面 | `8080 -> 8080` |
+
+### 1.2 项目自行构建的镜像
+
+| 服务 | Dockerfile 基础镜像 | 作用 | 容器端口 |
+| --- | --- | --- | --- |
+| OpenMemory | `python:3.12-slim` | Mem0 MCP Server、记忆生成与向量写入 | `8765` |
+| Backend | `python:3.12-slim` | FastAPI API、L1/L2/L3 worker | `8000` |
+| Frontend 构建阶段 | `node:24.20.0-alpine3.24` | 安装 pnpm 依赖并构建 React/Vite | 仅构建阶段 |
+| Frontend 运行阶段 | `nginx:1.27-alpine` | 托管前端静态文件 | `8081 -> 80` |
+
+前端采用多阶段构建，最终运行容器只包含 `nginx:1.27-alpine` 和构建后的静态文件。OpenMemory 与 Backend 的最终镜像由项目 Dockerfile 基于 `python:3.12-slim` 构建，Compose 不需要单独拉取带有固定仓库名的业务镜像。
 
 ## 2. Python 运行时依赖
 
@@ -41,6 +58,8 @@
 - 数据库：PostgreSQL + pgvector
 - 向量检索：Qdrant
 - 消息队列：Kafka
+- 缓存：Redis
+- MCP 服务：OpenMemory / Mem0
 - API 框架：FastAPI
 - 编排/运行：Docker Compose
 - Python 依赖管理：requirements.txt
@@ -48,24 +67,70 @@
 ## 4. 需要注意的版本差异
 
 - Qdrant 的 Docker 镜像使用 `latest`，因此不稳定，可能随时间更新；Python 端的 `qdrant-client` 则是固定到 `1.18.0`。
-- Kafka 镜像是 `bitnami/kafka:3.7`，对应的是 Kafka 3.7 系列。
+- Kafka 使用 Apache 官方镜像 `apache/kafka:3.7.2`，采用 KRaft 单节点模式；容器内服务通过 `kafka:9093` 连接，宿主机通过 `localhost:9092` 连接。
 - PostgreSQL 是 `pgvector/pgvector:pg16`，说明项目使用 PostgreSQL 16 及其 pgvector 扩展。
+
+## 5. 统一 Docker Compose 部署
+
+在仓库根目录准备 `.env`，至少填写模型服务密钥：
+
+```bash
+DEEPSEEK_API_KEY=你的DeepSeek_Key
+SILICONFLOW_API_KEY=你的SiliconFlow_Key
+```
+
+启动全部服务：
+
+```bash
+docker compose up -d --build
+```
+
+查看服务状态和日志：
+
+```bash
+docker compose ps
+docker compose logs -f backend
+```
+
+后端容器启动时会先执行 `alembic upgrade head`，初始化当前完整数据库结构，再以单 worker 启动 FastAPI。常用访问地址：
+
+| 服务 | 地址 |
+| --- | --- |
+| 前端 | `http://localhost:8081` |
+| 后端健康检查 | `http://localhost:8000/health` |
+| OpenMemory | `http://localhost:8765` |
+| Kafka UI | `http://localhost:8080` |
+| Qdrant | `http://localhost:6333` |
+
+停止服务：
+
+```bash
+docker compose down
+```
+
+如需清空数据库、向量和消息队列数据，才使用：
+
+```bash
+docker compose down -v
+```
 
 ---
 
 # 前后端部署步骤说明
 
-本文档整理了本项目的前后端部署方式，依据的实际文件包括：
+本文档整理了本项目的统一 Docker Compose 部署方式，依据的实际文件包括：
 
-- [memProject/README.md](memProject/README.md)
+- [docker-compose.yml](docker-compose.yml)
+- [memProject/Dockerfile](memProject/Dockerfile)
+- [mem0_repo/openmemory/api/Dockerfile](mem0_repo/openmemory/api/Dockerfile)
+- [agent-memory-frontend/Dockerfile](agent-memory-frontend/Dockerfile)
 - [agent-memory-frontend/智能体记忆系统前端部署说明.md](agent-memory-frontend/智能体记忆系统前端部署说明.md)
-- [memProject/docker-compose.yml](memProject/docker-compose.yml)
 
 ## 1. 部署总览
 
 该项目的部署大致分为 3 层：
 
-1. 基础设施层：PostgreSQL + pgvector、Qdrant、Kafka
+1. 基础设施层：PostgreSQL + pgvector、Qdrant、Redis、Kafka
 2. 后端服务层：FastAPI + OpenMemory MCP Server
 3. 前端静态层：React/Vite 构建产物 + nginx
 
@@ -78,7 +143,7 @@ nginx / 前端静态站点
   ↓
 后端 API (FastAPI)
   ↓
-PostgreSQL + Qdrant + Kafka
+PostgreSQL + Qdrant + Redis + Kafka
 ```
 
 ## 2. 后端部署步骤
@@ -93,39 +158,33 @@ PostgreSQL + Qdrant + Kafka
 - DeepSeek API Key
 - 硅基流动 API Key
 
-### 2.2 拉取代码并安装依赖
+### 2.2 配置环境变量
 
-```bash
-git clone <仓库地址>
-cd memProject
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-```
-
-### 2.3 配置环境变量
-
-在项目根目录创建或编辑 `.env`：
+在仓库根目录创建或编辑 `.env`：
 
 ```env
 DEEPSEEK_API_KEY=sk-你的Key
 SILICONFLOW_API_KEY=sk-你的Key
 ```
 
-### 2.4 启动基础设施
+### 2.3 构建并启动全部服务
 
 执行：
 
 ```bash
-docker compose up -d
+docker compose up -d --build
 ```
 
-这一步会拉起：
+Compose 会拉起以下服务：
 
 - PostgreSQL + pgvector
 - Qdrant
+- Redis
 - Kafka
 - Kafka UI
+- OpenMemory MCP Server
+- Backend FastAPI
+- Frontend nginx
 
 验证方式：
 
@@ -133,46 +192,17 @@ docker compose up -d
 docker ps --filter "name=mem-"
 ```
 
-### 2.5 初始化数据库
+### 2.4 数据库初始化
+
+Backend 容器启动时自动执行：
 
 ```bash
-python -m alembic revision --autogenerate -m "init_schema"
 python -m alembic upgrade head
 ```
 
-### 2.6 启动 OpenMemory MCP Server
+然后以单 worker 启动 FastAPI，避免 L1/L2/L3 后台任务重复运行。
 
-需要单独拉起 mem0 仓库并启动其 API：
-
-```bash
-cd ..
-git clone https://github.com/mem0ai/mem0.git mem0_repo
-cd mem0_repo/openmemory/api
-pip install -r requirements.txt
-```
-
-随后按文档修补兼容性问题，再启动：
-
-```bash
-uvicorn main:app --host 0.0.0.0 --port 8765
-```
-
-成功后应能看到类似：
-
-```text
-Uvicorn running on http://0.0.0.0:8765
-```
-
-### 2.7 启动 FastAPI 服务
-
-回到项目目录：
-
-```bash
-cd memProject
-uvicorn app.main:app --reload --port 8000
-```
-
-### 2.8 验证后端
+### 2.5 验证后端
 
 ```bash
 curl http://localhost:8000/health
@@ -181,14 +211,29 @@ curl http://localhost:8000/health
 也可以访问 Swagger：
 
 ```text
-http://localhost:8000/docs
+http://localhost:8000/health
 ```
 
 ---
 
-## 3. 前端部署步骤
+## 3. 前端访问与开发构建
 
-### 3.1 准备环境
+生产部署已由 Compose 中的 `frontend` 服务完成，不需要单独安装 nginx。访问：
+
+```text
+http://localhost:8081
+```
+
+### 3.1 前端镜像构建过程
+
+前端 Dockerfile 使用多阶段构建：
+
+1. `node:24.20.0-alpine3.24` 安装 pnpm 依赖并执行构建；
+2. `nginx:1.27-alpine` 托管最终 `dist/` 静态文件。
+
+如需脱离 Docker 在本地开发，才执行以下步骤。
+
+### 3.2 本地开发环境
 
 前端所需：
 
@@ -197,7 +242,7 @@ http://localhost:8000/docs
 - pnpm（项目声明为 `pnpm@11.7.0`）
 - nginx 或其他静态资源服务
 
-### 3.2 安装依赖
+### 3.3 安装依赖
 
 ```bash
 cd agent-memory-frontend
@@ -205,7 +250,7 @@ corepack enable
 corepack pnpm install
 ```
 
-### 3.3 配置环境变量
+### 3.4 配置环境变量
 
 创建或确认 `.env.production`：
 
@@ -217,7 +262,7 @@ VITE_APP_TITLE=智能体记忆系统前端
 
 如果前端和后端在同一域名下并由 nginx 转发，也可以设置为同源地址或空值。
 
-### 3.4 构建前端
+### 3.5 构建前端
 
 ```bash
 corepack pnpm build
@@ -225,7 +270,7 @@ corepack pnpm build
 
 构建成功后会生成 `dist/` 目录，作为静态部署产物。
 
-### 3.5 部署到 nginx
+### 3.6 手工部署到 nginx（可选）
 
 示例配置：
 
