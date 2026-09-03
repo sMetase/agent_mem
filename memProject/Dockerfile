@@ -1,18 +1,19 @@
-FROM python:3.12-slim
+FROM python:3.12-slim-bookworm
 
 WORKDIR /app
 
-# 系统依赖
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
-    libpq-dev \
-    curl \
-    && rm -rf /var/lib/apt/lists/*
+# 系统依赖已由 scripts/prepare-offline-debs.sh 下载到构建上下文。
+COPY offline-debs/ /tmp/offline-debs/
+RUN set -eux; \
+    test -n "$(find /tmp/offline-debs -maxdepth 1 -name '*.deb' -print -quit)"; \
+    dpkg --unpack /tmp/offline-debs/*.deb; \
+    dpkg --configure -a; \
+    rm -rf /tmp/offline-debs
 
 # Python 依赖
 COPY requirements.txt .
 
-# RUN pip config set global.index-url http://10.10.41.127:8081/repository/pypi-group/simple && pip config set global.trusted-host 10.10.41.127
+RUN pip config set global.index-url http://10.10.41.127:8081/repository/pypi-group/simple && pip config set global.trusted-host 10.10.41.127
 RUN pip install --no-cache-dir -r requirements.txt
 
 # 应用代码
