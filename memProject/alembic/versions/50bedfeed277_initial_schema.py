@@ -1,15 +1,14 @@
-"""initial schema (stub — project scaffolding created tables externally)
+"""Create the initial database schema.
 
 Revision ID: 50bedfeed277
 Revises:
 Create Date: 2026-07-01
 
-WARNING: This is a stub. The actual 12 base tables (t_user, t_agent, etc.)
-were created by the project scaffold, not by Alembic. This stub exists only
-to satisfy the revision chain referenced by migration 52c1d1f2e3a4.
 """
 from alembic import op
-import sqlalchemy as sa
+
+from app.core.database import Base
+from app.models import base as _models  # noqa: F401
 
 revision = "50bedfeed277"
 down_revision = None
@@ -18,8 +17,12 @@ depends_on = None
 
 
 def upgrade():
-    pass
+    bind = op.get_bind()
+    bind.exec_driver_sql("CREATE SEQUENCE IF NOT EXISTS t_memory_seq_id_seq")
+    Base.metadata.create_all(bind=bind)
 
 
 def downgrade():
-    pass
+    bind = op.get_bind()
+    Base.metadata.drop_all(bind=bind)
+    bind.exec_driver_sql("DROP SEQUENCE IF EXISTS t_memory_seq_id_seq")

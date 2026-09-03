@@ -12,6 +12,7 @@ WORKDIR /app
 
 COPY package.json pnpm-lock.yaml ./
 RUN corepack enable && corepack prepare pnpm@11.7.0 --activate
+# RUN pnpm config set registry http://10.10.41.127:8081/repository/npm-public
 RUN pnpm install --frozen-lockfile
 
 COPY . .
