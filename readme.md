@@ -19,7 +19,7 @@
 | PostgreSQL | `pgvector/pgvector:pg16` | 主数据库与 pgvector 向量扩展 | `5433 -> 5432` |
 | Qdrant | `qdrant/qdrant:latest` | 向量检索引擎 | `6333 -> 6333`、`6334 -> 6334` |
 | Redis | `redis:7-alpine` | 缓存与结果轮询 | `6379 -> 6379` |
-| Kafka | `apache/kafka:3.7.2` | 消息总线与异步写入队列 | `9092 -> 9092`、`9093 -> 9093` |
+| Kafka | `harbor.goertek.com/g-eam/kafka:3.7.2` | 消息总线与异步写入队列 | `9092 -> 9092`、`9093 -> 9093` |
 | Kafka UI | `provectuslabs/kafka-ui:latest` | Kafka 管理界面 | `8080 -> 8080` |
 
 ### 1.2 项目自行构建的镜像
@@ -67,7 +67,7 @@
 ## 4. 需要注意的版本差异
 
 - Qdrant 的 Docker 镜像使用 `latest`，因此不稳定，可能随时间更新；Python 端的 `qdrant-client` 则是固定到 `1.18.0`。
-- Kafka 使用 Apache 官方镜像 `apache/kafka:3.7.2`，采用 KRaft 单节点模式；容器内服务通过 `kafka:9093` 连接，宿主机通过 `localhost:9092` 连接。
+- Kafka 使用 Harbor 镜像 `harbor.goertek.com/g-eam/kafka:3.7.2`，采用 KRaft 单节点模式；容器内服务通过 `kafka:9093` 连接，宿主机通过 `localhost:9092` 连接。
 - PostgreSQL 是 `pgvector/pgvector:pg16`，说明项目使用 PostgreSQL 16 及其 pgvector 扩展。
 
 ## 5. 统一 Docker Compose 部署

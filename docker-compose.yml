@@ -51,7 +51,7 @@ services:
       - "${REDIS_PORT:-6379}:6379"
 
   kafka:
-    image: apache/kafka:3.7.2
+    image: harbor.goertek.com/g-eam/kafka:3.7.2
     container_name: mem-kafka
     restart: unless-stopped
     ports:

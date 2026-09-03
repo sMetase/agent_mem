@@ -1,4 +1,4 @@
-FROM python:3.12-slim
+FROM harbor.goertek.com/g-eam/python:3.12-slim
 
 LABEL org.opencontainers.image.name="mem0/openmemory-mcp"
 

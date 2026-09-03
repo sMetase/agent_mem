@@ -1,4 +1,4 @@
-FROM node:24.20.0-alpine3.24 AS builder
+FROM harbor.goertek.com/g-eam/node:24.20.0-alpine3.24 AS builder
 
 ARG VITE_API_BASE_URL=http://localhost:8000
 ARG VITE_API_TIMEOUT_MS=30000
@@ -18,7 +18,7 @@ RUN pnpm install --frozen-lockfile
 COPY . .
 RUN pnpm build
 
-FROM nginx:1.27-alpine
+FROM harbor.goertek.com/g-eam/nginx:1.27-alpine
 
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 COPY --from=builder /app/dist /usr/share/nginx/html
