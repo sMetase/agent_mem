@@ -45,6 +45,8 @@ export default function SettingsPage() {
   const [scheduleForm] = Form.useForm<ExtractionScheduleFormValues>()
   const [savingLlm, setSavingLlm] = useState(false)
   const [savingSchedule, setSavingSchedule] = useState(false)
+  const [loadingSchedule, setLoadingSchedule] = useState(true)
+  const [scheduleLoadError, setScheduleLoadError] = useState(false)
   const [hasApiKey, setHasApiKey] = useState(false)
 
   const loadLlmConfig = useCallback(async () => {
@@ -62,6 +64,8 @@ export default function SettingsPage() {
   }, [loadLlmConfig])
 
   const loadExtractionSchedule = useCallback(async () => {
+    setLoadingSchedule(true)
+    setScheduleLoadError(false)
     try {
       const schedule = await getExtractionSchedule()
       scheduleForm.setFieldsValue({
@@ -73,11 +77,14 @@ export default function SettingsPage() {
         timezone: schedule.extraction_timezone,
       })
     } catch {
+      setScheduleLoadError(true)
       scheduleForm.setFieldsValue({
         mode: 'continuous',
         window: [parseScheduleTime('23:00'), parseScheduleTime('06:00')],
         timezone: 'Asia/Shanghai',
       })
+    } finally {
+      setLoadingSchedule(false)
     }
   }, [scheduleForm])
 
@@ -166,6 +173,15 @@ export default function SettingsPage() {
         </Card>
 
         <Card variant="borderless" title="异步记忆消费时间">
+          {scheduleLoadError ? (
+            <Alert
+              type="warning"
+              showIcon
+              title="未能读取后端消费设置"
+              description="当前显示的是本地默认值，保存前请确认后端服务可用。"
+              style={{ marginBottom: 16 }}
+            />
+          ) : null}
           <Alert
             type="info"
             showIcon
@@ -201,7 +217,14 @@ export default function SettingsPage() {
                 </>
               ) : null}
             </Form.Item>
-            <Button type="primary" htmlType="submit" loading={savingSchedule}>保存消费设置</Button>
+            <Button
+              type="primary"
+              htmlType="submit"
+              loading={savingSchedule || loadingSchedule}
+              disabled={loadingSchedule}
+            >
+              保存消费设置
+            </Button>
           </Form>
         </Card>
       </Space>

@@ -5,6 +5,7 @@
 
 import os
 import re
+import tempfile
 from pathlib import Path
 from typing import Optional
 
@@ -143,6 +144,14 @@ class Settings(BaseSettings):
     monitoring: MonitoringConfig = MonitoringConfig()
 
 
+GENERATION_SCHEDULE_FIELDS = {
+    "extraction_schedule_enabled",
+    "extraction_window_start",
+    "extraction_window_end",
+    "extraction_timezone",
+}
+
+
 def _resolve_env_vars(value: str) -> str:
     if not isinstance(value, str):
         return value
@@ -189,6 +198,62 @@ def load_settings(config_path: Optional[str] = None) -> Settings:
         logging=LoggingConfig(**resolved.get("logging", {})),
         monitoring=MonitoringConfig(**resolved.get("monitoring", {})),
     )
+
+
+def persist_generation_schedule(updates: dict, config_path: Optional[str] = None) -> None:
+    """Persist extraction schedule fields without rewriting YAML comments or env vars."""
+    path = Path(config_path) if config_path else Path(__file__).parent.parent.parent / "config" / "settings.yaml"
+    if not path.exists():
+        raise FileNotFoundError(f"配置文件不存在: {path}")
+
+    unknown_fields = set(updates) - GENERATION_SCHEDULE_FIELDS
+    if unknown_fields:
+        raise ValueError(f"不允许持久化配置字段: {', '.join(sorted(unknown_fields))}")
+
+    lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
+    in_generation = False
+    found_fields: set[str] = set()
+    rendered: list[str] = []
+
+    for line in lines:
+        if line and not line[0].isspace() and line.rstrip().endswith(":"):
+            in_generation = line.strip() == "generation:"
+
+        match = re.match(r"^(\s{2})(extraction_(?:schedule_enabled|window_start|window_end|timezone)):\s*.*?(\r?\n)?$", line)
+        if in_generation and match and match.group(2) in updates:
+            key = match.group(2)
+            value = updates[key]
+            if isinstance(value, bool):
+                serialized = "true" if value else "false"
+            else:
+                serialized = f'"{str(value).replace(chr(34), chr(92) + chr(34))}"'
+            newline = match.group(3) or ""
+            line = f"{match.group(1)}{key}: {serialized}{newline}"
+            found_fields.add(key)
+        rendered.append(line)
+
+    missing_fields = set(updates) - found_fields
+    if missing_fields:
+        raise ValueError(f"settings.yaml 缺少配置字段: {', '.join(sorted(missing_fields))}")
+
+    content = "".join(rendered)
+    with tempfile.NamedTemporaryFile(
+        mode="w",
+        encoding="utf-8",
+        dir=path.parent,
+        prefix=f".{path.name}.",
+        suffix=".tmp",
+        delete=False,
+    ) as temporary:
+        temporary.write(content)
+        temporary.flush()
+        os.fsync(temporary.fileno())
+        temporary_path = Path(temporary.name)
+
+    try:
+        os.replace(temporary_path, path)
+    finally:
+        temporary_path.unlink(missing_ok=True)
 
 
 _settings: Optional[Settings] = None

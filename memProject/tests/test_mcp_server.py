@@ -47,6 +47,10 @@ def test_mcp_endpoint_is_reachable_from_backend_asgi_app():
     response = asyncio.run(request_mcp_endpoint())
 
     # Streamable HTTP accepts POST/DELETE; GET must be handled by the mounted route,
+
+
+
+    
     # rather than falling through to the backend's 404 handler.
     assert response.status_code == 405
 

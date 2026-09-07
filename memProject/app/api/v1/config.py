@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
 from app.core.crypto import encrypt_secret
 from app.core.logger import get_logger
-from app.core.config import get_settings
+from app.core.config import get_settings, persist_generation_schedule
 from app.api.deps import require_admin
 from app.models.base import LlmConfig
 from app.schemas.common import ok
@@ -73,6 +73,7 @@ async def put_extraction_schedule(
 ):
     schedule = settings.generation
     updates = body.model_dump(exclude_unset=True)
+    persist_generation_schedule(updates)
     for field_name, value in updates.items():
         setattr(schedule, field_name, value)
 

@@ -162,6 +162,8 @@ close_session
 
 `write_conversation` 是异步写入，返回 accepted 不代表记忆已经完成抽取。检索前应等待后台 worker 完成，或先通过 REST 接口确认处理状态。
 
+Settings 页面中的“异步记忆消费时间”会通过 `PUT /api/v1/config/extraction-schedule` 更新运行时配置，并原子写入 `config/settings.yaml`。因此 backend 重启后仍会保留最近一次保存的消费模式、时间窗口和时区。写入只修改 `generation` 区块中的四个字段，不会覆盖其它配置或环境变量占位符。
+
 ---
 
 ### 第八步：验证
