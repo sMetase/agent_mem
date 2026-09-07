@@ -131,8 +131,8 @@ export default function SettingsPage() {
 
   return (
     <PageContainer
-      title="基础连接设置"
-      description="配置当前浏览器访问的后端服务地址与大模型服务。"
+      title="系统设置"
+      description="配置后端连接、大模型服务和异步记忆消费时间。"
     >
       <Space orientation="vertical" size={14} style={{ display: 'flex' }}>
         <Alert

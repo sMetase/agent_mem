@@ -244,7 +244,7 @@ export const appRouteConfigs: AppRouteConfig[] = [
     path: appRoutes.settings,
     label: '系统设置',
     title: '系统设置',
-    description: '管理后端连接地址。',
+    description: '管理后端连接、大模型服务和异步记忆消费时间。',
     icon: <SettingOutlined />,
     element: <SettingsRoutePage />,
   },
@@ -334,7 +334,7 @@ export const menuSectionConfigs: MenuSectionConfig[] = [
     label: '6. 系统设置',
     icon: <SettingOutlined />,
     items: [
-      routeItem('settings:connection', appRoutes.connectionSettings, '基础连接设置', <ApiOutlined />),
+      routeItem('settings:connection', appRoutes.connectionSettings, '连接与消费设置', <ApiOutlined />),
     ],
   },
 ]
