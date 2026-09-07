@@ -17,6 +17,7 @@
 #   Qdrant     6333 / 6334
 #   Kafka      9092
 #   Kafka UI   8080
+#   MCP Server 8000/mcp
 # ============================================================
 
 services:
@@ -108,8 +109,6 @@ services:
       EMBEDDER_API_KEY: ${SILICONFLOW_API_KEY}
       EMBEDDER_BASE_URL: ${SILICONFLOW_BASE_URL:-https://api.siliconflow.cn/v1}
       MCP_BASE_URL: ${MCP_BASE_URL:-http://openmemory:8765/mcp}
-    ports:
-      - "${OPENMEMORY_PORT:-8765}:8765"
     command: uvicorn main:app --host 0.0.0.0 --port 8765
 
   backend:

@@ -15,6 +15,7 @@ from typing import AsyncGenerator
 import uvicorn
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastmcp.utilities.lifespan import combine_lifespans
 
 from app.core.config import get_settings
 from app.core.database import check_db_connection, create_pgvector_extension
@@ -24,6 +25,7 @@ from app.services.mem0_client import mem0_client
 from app.services.l1_worker import l1_worker_loop
 from app.services.l2_worker import l2_worker_loop
 from app.services.l3_worker import l3_worker_loop
+from app.mcp_server import mcp
 
 settings = get_settings()
 setup_logging()
@@ -121,12 +123,18 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     logger.info("Application shutting down")
 
 
+mcp_app = mcp.http_app(
+    path="/",
+    transport="streamable-http",
+    stateless_http=True,
+)
+
 app = FastAPI(
     title=settings.app.name,
     version=settings.app.version,
     docs_url="/docs" if settings.app.debug else None,
     redoc_url="/redoc" if settings.app.debug else None,
-    lifespan=lifespan,
+    lifespan=combine_lifespans(lifespan, mcp_app.lifespan),
 )
 
 register_exception_handlers(app)
@@ -162,6 +170,9 @@ app.include_router(api_router, prefix="/api/v1")
 
 from app.api.v1.proxy import router as proxy_router
 app.include_router(proxy_router)  # Proxy 路径自带 /proxy/{spaceId}/v1/...，不加 /api/v1 前缀
+
+# 对外 MCP 与 REST API 共用同一个 backend 进程和端口。
+app.mount("/mcp", mcp_app)
 
 
 if __name__ == "__main__":

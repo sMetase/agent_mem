@@ -91,6 +91,10 @@ class RetrievalConfig(BaseSettings):
 class GenerationConfig(BaseSettings):
     extraction_batch_size: int = 20
     schedule_interval_minutes: int = 5
+    extraction_schedule_enabled: bool = False
+    extraction_window_start: str = "00:00"
+    extraction_window_end: str = "23:59"
+    extraction_timezone: str = "Asia/Shanghai"
     max_memory_text_length: int = 2000
     max_summary_length: int = 500
     # fail-safe: 默认走真实 Pipeline。Mock 仅限开发期在 settings.yaml 显式开启，

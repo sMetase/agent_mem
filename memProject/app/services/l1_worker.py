@@ -11,10 +11,12 @@ L1 异步抽取 worker — 后台定时扫描 L0 增量，异步抽 L1。
 """
 
 import asyncio
-from datetime import datetime, timezone
+from datetime import datetime, time, timezone
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import select, update
 
+from app.core.config import get_settings
 from app.core.database import async_session_factory
 from app.core.logger import get_logger
 from app.models.base import InteractionRecord, MemoryCursor
@@ -22,12 +24,46 @@ from app.services.memory_pipeline import memory_pipeline
 from app.services.worker_stats import record
 
 logger = get_logger("l1_worker")
+settings = get_settings()
 
 # 方案 Q5 / Q2 参数
 L1_BATCH_QUERY = 20     # over-fetch：读 20
 L1_BATCH_PROCESS = 10   # 处理 10
 WORKER_CONCURRENCY = 25  # 20-30 并发
 POLL_INTERVAL_SECONDS = 5  # idle 轮询间隔
+
+
+def _parse_window_time(value: str) -> time:
+    """Parse HH:MM or HH:MM:SS, raising a clear error for bad deployment config."""
+    return time.fromisoformat(value.strip())
+
+
+def _is_extraction_window_open(now: datetime | None = None) -> bool:
+    """Return whether the current time is inside the configured extraction window."""
+    schedule = settings.generation
+    if not schedule.extraction_schedule_enabled:
+        return True
+
+    try:
+        timezone_info = ZoneInfo(schedule.extraction_timezone)
+        current_datetime = now or datetime.now(timezone_info)
+        if current_datetime.tzinfo is None:
+            current_datetime = current_datetime.replace(tzinfo=timezone_info)
+        else:
+            current_datetime = current_datetime.astimezone(timezone_info)
+        current = current_datetime.time()
+        start = _parse_window_time(schedule.extraction_window_start)
+        end = _parse_window_time(schedule.extraction_window_end)
+    except (ValueError, KeyError) as exc:
+        logger.error("L1 抽取时间窗口配置无效，暂停抽取: %s", exc)
+        return False
+
+    if start == end:
+        return True
+    if start < end:
+        return start <= current < end
+    # 跨午夜，例如 23:00-06:00。
+    return current >= start or current < end
 
 
 def _cursor_key(user_id: str, agent_id: str, session_id: str) -> str:
@@ -158,6 +194,10 @@ async def l1_worker_loop(stop_event: asyncio.Event | None = None):
     while True:
         if stop_event and stop_event.is_set():
             break
+
+        if not _is_extraction_window_open():
+            await asyncio.sleep(POLL_INTERVAL_SECONDS)
+            continue
 
         try:
             async with async_session_factory() as db:

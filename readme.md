@@ -4,7 +4,6 @@
 
 - docker-compose.yml
 - memProject/Dockerfile
-- mem0_repo/openmemory/api/Dockerfile
 - agent-memory-frontend/Dockerfile
 - memProject/requirements.txt
 
@@ -26,12 +25,12 @@
 
 | 服务 | Dockerfile 基础镜像 | 作用 | 容器端口 |
 | --- | --- | --- | --- |
-| OpenMemory | `python:3.12-slim` | Mem0 MCP Server、记忆生成与向量写入 | `8765` |
 | Backend | `python:3.12-slim` | FastAPI API、L1/L2/L3 worker | `8000` |
+| OpenMemory | `python:3.12-slim` | Backend 内部记忆存储 MCP | `8765` |
 | Frontend 构建阶段 | `node:24.20.0-alpine3.24` | 安装 pnpm 依赖并构建 React/Vite | 仅构建阶段 |
 | Frontend 运行阶段 | `nginx:1.27-alpine` | 托管前端静态文件 | `8081 -> 80` |
 
-前端采用多阶段构建，最终运行容器只包含 `nginx:1.27-alpine` 和构建后的静态文件。OpenMemory 与 Backend 的最终镜像由项目 Dockerfile 基于 `python:3.12-slim` 构建，Compose 不需要单独拉取带有固定仓库名的业务镜像。
+前端采用多阶段构建，最终运行容器只包含 `nginx:1.27-alpine` 和构建后的静态文件。Backend 与 memProject MCP 的最终镜像由同一个 `memProject/Dockerfile` 基于 `python:3.12-slim` 构建；OpenMemory 仅作为 Backend 的内部存储依赖。
 
 ## 2. Python 运行时依赖
 
@@ -59,7 +58,7 @@
 - 向量检索：Qdrant
 - 消息队列：Kafka
 - 缓存：Redis
-- MCP 服务：OpenMemory / Mem0
+- MCP 服务：memProject MCP Server（对外） + OpenMemory MCP（Backend 内部）
 - API 框架：FastAPI
 - 编排/运行：Docker Compose
 - Python 依赖管理：requirements.txt
@@ -98,7 +97,8 @@ docker compose logs -f backend
 | --- | --- |
 | 前端 | `http://localhost:8081` |
 | 后端健康检查 | `http://localhost:8000/health` |
-| OpenMemory | `http://localhost:8765` |
+| MCP Server | `http://localhost:8000/mcp/` |
+| OpenMemory（内部） | 不对外暴露，容器内地址 `http://openmemory:8765/mcp` |
 | Kafka UI | `http://localhost:8080` |
 | Qdrant | `http://localhost:6333` |
 
@@ -122,7 +122,6 @@ docker compose down -v
 
 - [docker-compose.yml](docker-compose.yml)
 - [memProject/Dockerfile](memProject/Dockerfile)
-- [mem0_repo/openmemory/api/Dockerfile](mem0_repo/openmemory/api/Dockerfile)
 - [agent-memory-frontend/Dockerfile](agent-memory-frontend/Dockerfile)
 - [agent-memory-frontend/智能体记忆系统前端部署说明.md](agent-memory-frontend/智能体记忆系统前端部署说明.md)
 
@@ -131,7 +130,7 @@ docker compose down -v
 该项目的部署大致分为 3 层：
 
 1. 基础设施层：PostgreSQL + pgvector、Qdrant、Redis、Kafka
-2. 后端服务层：FastAPI + OpenMemory MCP Server
+2. 后端服务层：FastAPI（内置 memProject MCP）+ 内部 OpenMemory MCP
 3. 前端静态层：React/Vite 构建产物 + nginx
 
 整体结构如下：
@@ -182,7 +181,8 @@ Compose 会拉起以下服务：
 - Redis
 - Kafka
 - Kafka UI
-- OpenMemory MCP Server
+- OpenMemory MCP Server（Backend 内部）
+- memProject MCP Server（对外高级工具接口）
 - Backend FastAPI
 - Frontend nginx
 

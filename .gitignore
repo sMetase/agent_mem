@@ -39,3 +39,4 @@ continue_zh.jsonl
 大规模数据集*.json
 *.tar.gz
 *.docx
+.vscode/

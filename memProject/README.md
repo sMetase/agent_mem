@@ -1,20 +1,16 @@
 # 面向大模型智能体的记忆系统
 
-基于 [mem0](https://github.com/mem0ai/mem0) + OpenMemory MCP Server 构建的智能体记忆管理中台。
+基于 [mem0](https://github.com/mem0ai/mem0) 构建的智能体记忆管理中台，提供 REST API 和 memProject MCP Server。
 
 ## 架构
 
 ```
-memProject (FastAPI :8000)            OpenMemory MCP Server (:8765)
-┌──────────────────────┐    MCP      ┌───────────────────────────┐
-│ app/mcp_client.py    │──Streamable─→│ add_memories              │
-│ app/api/v1/memory.py │   HTTP      │ search_memory            │
-└──────────────────────┘             │ list_memories            │
-                                     │ delete_all_memories      │
-                                     │     ↓                    │
-                                     │ DeepSeek + bge-m3       │
-                                     │ Qdrant + PostgreSQL      │
-                                     └───────────────────────────┘
+智能体 / 前端
+    │
+    ├── REST  → memProject FastAPI (:8000) ─┐
+    │                                       ├── OpenMemory MCP (:8765, 内部存储)
+    │                                       ├── PostgreSQL / Qdrant
+    └── MCP   → memProject MCP (:8000/mcp/) ─┴── 高级工具适配层
 ```
 
 ## 从零开始
@@ -87,95 +83,84 @@ python -m alembic upgrade head
 
 ---
 
-### 第六步：搭建 OpenMemory MCP Server
-
-**6.1 克隆 Mem0 仓库**
-
-```bash
-cd ..
-git clone https://github.com/mem0ai/mem0.git mem0_repo
-cd mem0_repo/openmemory/api
-```
-
-**6.2 安装依赖**
-
-```bash
-pip install -r requirements.txt
-```
-
-**6.3 打补丁（3 处修改）**
-
-*补丁 1*：`app/utils/memory.py` — 找到 `get_default_memory_config` 函数，将 LLM/Embedder 环境变量读取部分替换为：
-
-```python
-    # --- 硬编码 DeepSeek + SiliconFlow ---
-    llm_config = {
-        "model": "deepseek-chat",
-        "api_key": "sk-你的DeepSeek-Key",
-        "openai_base_url": "https://api.deepseek.com/v1",
-        "temperature": 0.1,
-        "max_tokens": 2000,
-    }
-
-    embedder_config = {
-        "model": "BAAI/bge-m3",
-        "api_key": "sk-你的硅基流动-Key",
-        "openai_base_url": "https://api.siliconflow.cn/v1",
-    }
-```
-
-*补丁 2*：同一文件，在 Qdrant 配置处加 `"embedding_model_dims": 1024`：
-
-```python
-# 搜索 "QDRANT_HOST" 找到这段，加一行：
-vector_store_config.update({
-    "host": os.environ.get('QDRANT_HOST'),
-    "port": int(os.environ.get('QDRANT_PORT')),
-    "embedding_model_dims": 1024,   # ← 加这一行
-})
-```
-
-*补丁 3*：`app/mcp_server.py` — 修复两处 mem0 v2.x 兼容性问题：
-
-```python
-# list_memories 中（约第 247 行）：
-# 改前：memory_client.get_all(user_id=uid)
-# 改后：
-memory_client.get_all(filters={"user_id": uid})
-
-# search_memory 中（约第 179 行），删除 limit 参数：
-# 改前：memory_client.vector_store.search(query=query, vectors=embeddings, limit=10, filters=filters)
-# 改后：
-memory_client.vector_store.search(query=query, vectors=embeddings, filters=filters)
-```
-
-**6.4 创建启动脚本** `start.bat`：
-
-```bat
-@echo off
-cd /d C:\Users\<你的用户名>\mem0_repo\openmemory\api
-set QDRANT_HOST=localhost
-set QDRANT_PORT=6333
-uvicorn main:app --host 0.0.0.0 --port 8765
-```
-
-**6.5 启动**
-
-```bash
-start.bat
-```
-
-看到 `Uvicorn running on http://0.0.0.0:8765` 即成功。
-
----
-
-### 第七步：启动 FastAPI
+### 第六步：启动 FastAPI
 
 ```bash
 cd memProject
-.venv\Scripts\activate
-uvicorn app.main:app --reload --port 8000
+# Conda
+conda run -n mem python -m uvicorn app.main:app --reload --port 8000
+
+# 或已激活 mem 环境时
+python -m uvicorn app.main:app --reload --port 8000
 ```
+
+---
+
+### 第七步：使用 backend 内置的 memProject MCP Server
+
+MCP Server 使用 Streamable HTTP，与 REST API 共用 backend 进程，默认地址为 `http://127.0.0.1:8000/mcp/`。
+它调用 memProject 的 REST API，复用 backend 连接的 OpenMemory MCP、PostgreSQL、Qdrant 和异步记忆流水线；OpenMemory 只作为内部存储，不作为外部 MCP 入口。
+
+不需要单独启动 MCP 进程，启动 FastAPI backend 后即可使用。MCP 工具定义位于 `app/mcp_server.py`，由 `app/main.py` 挂载。
+
+可通过环境变量配置 backend 内部调用地址：
+
+```bash
+export MEMPROJECT_API_URL=http://127.0.0.1:8000
+
+# 生产环境 AUTH_ENABLED=true 时配置后端 API Key
+export MEMPROJECT_MCP_API_KEY=你的AgentApiKey
+```
+
+VS Code 用户运行 `dev:preview` 即可同时启动前端和包含 MCP 的 backend。
+
+#### MCP 工具
+
+| 工具 | 用途 |
+|------|------|
+| `create_session` | 创建会话 |
+| `write_conversation` | 写入对话消息，异步抽取记忆 |
+| `write_session_summary` | 写入历史会话摘要 |
+| `search_memories` | 混合语义检索记忆 |
+| `get_memory_context` | 获取可直接注入 Prompt 的上下文 |
+| `close_session` | 关闭会话并执行会话记忆压缩 |
+
+#### MCP 客户端配置示例
+
+支持 Streamable HTTP 的 MCP 客户端配置为：
+
+```json
+{
+    "mcpServers": {
+        "memProject": {
+            "type": "http",
+            "url": "http://127.0.0.1:8000/mcp/"
+        }
+    }
+}
+```
+
+生产环境启用认证时，客户端需要同时传递：
+
+```text
+X-API-Key: 你的AgentApiKey
+X-User-Id: user_001
+X-Agent-Id: agent_xxx
+```
+
+#### 推荐调用顺序
+
+```text
+create_session
+            ↓
+write_conversation
+            ↓
+get_memory_context / search_memories
+            ↓
+close_session
+```
+
+`write_conversation` 是异步写入，返回 accepted 不代表记忆已经完成抽取。检索前应等待后台 worker 完成，或先通过 REST 接口确认处理状态。
 
 ---
 
@@ -188,8 +173,8 @@ curl http://localhost:8000/health
 # Swagger 文档
 # 浏览器打开 http://localhost:8000/docs
 
-# 测试 MCP 4 个工具
-python tests/test_mcp_4tools.py
+# 检查 MCP 工具是否注册
+conda run -n mem python -c "import asyncio; from app.mcp_server import mcp; print([t.name for t in asyncio.run(mcp.list_tools())])"
 ```
 
 ---
@@ -205,7 +190,8 @@ memProject/
 │   ├── models/base.py           # 12 张表 ORM
 │   ├── schemas/                 # 请求/响应 Pydantic
 │   ├── services/mem0_client.py  # mem0 直连（已弃用，保留备用）
-│   ├── mcp_client.py            # MCP Client → OpenMemory Server
+│   ├── mcp_server.py            # memProject MCP Server（Streamable HTTP）
+│   ├── mcp_client.py            # 旧 OpenMemory 兼容客户端（内部备用）
 │   └── middleware/              # 日志、认证、异常处理
 ├── config/settings.yaml         # 全局配置
 ├── alembic/                     # 数据库迁移
