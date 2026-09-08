@@ -9,12 +9,12 @@ import os
 from typing import Any
 
 import httpx
-from fastmcp import FastMCP
+from fastmcp import Context, FastMCP
+from fastmcp.server.dependencies import get_http_request
 
 REST_BASE_URL = os.getenv("MEMPROJECT_API_URL", "http://127.0.0.1:8000").rstrip("/")
 MCP_HOST = os.getenv("MEMPROJECT_MCP_HOST", "127.0.0.1")
 MCP_PORT = int(os.getenv("MEMPROJECT_MCP_PORT", "8001"))
-MCP_API_KEY = os.getenv("MEMPROJECT_MCP_API_KEY", "")
 
 mcp = FastMCP(
     "memProject Memory Server",
@@ -35,13 +35,18 @@ async def _request(
     agent_id: str | None = None,
     json: dict[str, Any] | None = None,
     params: dict[str, Any] | None = None,
+    context: Context | None = None,
 ) -> Any:
     headers = {
         "X-User-Id": user_id,
         "X-Agent-Id": agent_id or "agent_mcp",
     }
-    if MCP_API_KEY:
-        headers["X-API-Key"] = MCP_API_KEY
+    if context is not None:
+        request = get_http_request()
+        for header_name in ("X-API-Key", "X-User-Id", "X-Agent-Id"):
+            header_value = request.headers.get(header_name)
+            if header_value:
+                headers[header_name] = header_value
 
     async with httpx.AsyncClient(base_url=REST_BASE_URL, timeout=60.0) as client:
         response = await client.request(
@@ -65,6 +70,7 @@ async def create_session(
     scene_id: str | None = None,
     agent_id: str | None = None,
     task_id: str | None = None,
+    context: Context | None = None,
 ) -> dict[str, Any]:
     """Create an active conversation session in memProject."""
     return await _request(
@@ -72,6 +78,7 @@ async def create_session(
         "/api/v1/session",
         user_id=user_id,
         agent_id=agent_id,
+        context=context,
         json={
             "user_id": user_id,
             "scene_id": scene_id,
@@ -88,6 +95,7 @@ async def write_conversation(
     messages: list[dict[str, str]],
     scene_id: str | None = None,
     agent_id: str | None = None,
+    context: Context | None = None,
 ) -> dict[str, Any]:
     """Write conversation messages for asynchronous memory extraction."""
     return await _request(
@@ -95,6 +103,7 @@ async def write_conversation(
         "/api/v1/memory/write",
         user_id=user_id,
         agent_id=agent_id,
+        context=context,
         json={
             "user_id": user_id,
             "session_id": session_id,
@@ -114,6 +123,7 @@ async def write_session_summary(
     session_source: str | None = None,
     scene_id: str | None = None,
     agent_id: str | None = None,
+    context: Context | None = None,
 ) -> dict[str, Any]:
     """Write a historical session summary for asynchronous memory extraction."""
     return await _request(
@@ -121,6 +131,7 @@ async def write_session_summary(
         "/api/v1/memory/write",
         user_id=user_id,
         agent_id=agent_id,
+        context=context,
         json={
             "user_id": user_id,
             "session_id": session_id,
@@ -141,6 +152,7 @@ async def search_memories(
     scene_id: str | None = None,
     top_k: int = 10,
     agent_id: str | None = None,
+    context: Context | None = None,
 ) -> dict[str, Any]:
     """Search memProject memories with hybrid semantic retrieval."""
     return await _request(
@@ -148,6 +160,7 @@ async def search_memories(
         "/api/v1/memory/search",
         user_id=user_id,
         agent_id=agent_id,
+        context=context,
         json={
             "user_id": user_id,
             "query": query,
@@ -168,6 +181,7 @@ async def get_memory_context(
     max_tokens: int = 3000,
     top_k: int = 10,
     agent_id: str | None = None,
+    context: Context | None = None,
 ) -> dict[str, Any]:
     """Assemble retrieved memories into a prompt-ready context fragment."""
     return await _request(
@@ -175,6 +189,7 @@ async def get_memory_context(
         "/api/v1/memory/context",
         user_id=user_id,
         agent_id=agent_id,
+        context=context,
         json={
             "user_id": user_id,
             "query": query,
@@ -192,6 +207,7 @@ async def close_session(
     user_id: str,
     session_id: str,
     agent_id: str | None = None,
+    context: Context | None = None,
 ) -> dict[str, Any]:
     """Close a session and trigger its configured memory compression flow."""
     return await _request(
@@ -199,6 +215,7 @@ async def close_session(
         f"/api/v1/session/{session_id}/close",
         user_id=user_id,
         agent_id=agent_id,
+        context=context,
     )
 
 

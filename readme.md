@@ -130,6 +130,24 @@ http://localhost:8000/mcp/
 
 ### MCP 客户端配置
 
+#### 先通过网页注册并获取凭据
+
+1. 打开前端：`http://localhost:8081/login`。首次使用时输入用户名和密码即可注册并登录。
+2. 登录后进入“智能体注册接入”页面：`http://localhost:8081/access/agents`。
+3. 注册智能体并选择所属场景。注册成功后保存弹窗中显示的 `api_key` 和 `agent_id`；API Key 只会明文返回一次。
+4. 记下登录接口返回的 `user_id`。之后调用 MCP 时使用以下三个值：
+
+```text
+X-API-Key: 你的AgentApiKey
+X-User-Id: user_001
+X-Agent-Id: agent_xxx
+```
+
+其中 `X-API-Key` 是注册智能体返回的 `api_key`，`X-Agent-Id` 是返回的 `agent_id`，`X-User-Id` 是登录用户的 `user_id`。
+
+当前内置 MCP Server 会将 MCP 客户端请求中的 `X-API-Key`、`X-User-Id` 和 `X-Agent-Id`
+透传给内部 REST API，不需要额外配置 `MEMPROJECT_MCP_API_KEY`。
+
 支持 Streamable HTTP 的 MCP 客户端可以配置：
 
 ```json
@@ -150,6 +168,27 @@ X-API-Key: 你的AgentApiKey
 X-User-Id: user_001
 X-Agent-Id: agent_xxx
 ```
+
+#### 配置 Claude Code
+
+将下面命令中的三个占位值替换为网页注册后保存的凭据：
+
+```bash
+claude mcp add --transport http memProject http://localhost:8000/mcp/ \
+  --header "X-API-Key: 你的AgentApiKey" \
+  --header "X-User-Id: user_001" \
+  --header "X-Agent-Id: agent_xxx"
+```
+
+配置完成后，可以使用以下命令检查 MCP Server 是否已添加：
+
+```bash
+claude mcp list
+```
+
+如果后端部署在其他机器，请将命令中的 `http://localhost:8000/mcp/` 替换为实际的 MCP 地址。
+
+API Key 属于敏感凭据，请不要提交到代码仓库或分享命令历史。
 
 推荐调用顺序：
 

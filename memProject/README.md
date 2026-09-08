@@ -107,9 +107,6 @@ MCP Server 使用 Streamable HTTP，与 REST API 共用 backend 进程，默认�
 
 ```bash
 export MEMPROJECT_API_URL=http://127.0.0.1:8000
-
-# 生产环境 AUTH_ENABLED=true 时配置后端 API Key
-export MEMPROJECT_MCP_API_KEY=你的AgentApiKey
 ```
 
 VS Code 用户运行 `dev:preview` 即可同时启动前端和包含 MCP 的 backend。
@@ -147,6 +144,8 @@ X-API-Key: 你的AgentApiKey
 X-User-Id: user_001
 X-Agent-Id: agent_xxx
 ```
+
+MCP Server 会将客户端传入的认证请求头透传给内部 REST API，不需要配置额外的 `MEMPROJECT_MCP_API_KEY`。
 
 #### 推荐调用顺序
 
