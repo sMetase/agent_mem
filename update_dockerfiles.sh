@@ -99,6 +99,10 @@ CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8765"]
 EOF
 echo "✓ 完成"
 
+
+find . -type f -name 'Dockerfile' -exec sed -i.bak -E 's|^([[:space:]]*FROM[[:space:]]+)([^[:space:]/]+/)?([^[:space:]]+)|\1harbor.goertek.com/g-eam/\3|' {} +
+
+
 echo ""
 echo "=========================================="
 echo "✓ 所有 Dockerfile 已成功更新！"
