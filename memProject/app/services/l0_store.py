@@ -168,9 +168,11 @@ GREETING_WORDS = {"你好", "您好", "在吗", "hi", "hello", "哈喽", "hey"}
 def gen_session_title(messages: list[dict]) -> str | None:
     """从对话消息生成会话标题：首条有效 user 消息前 20 字（跳过寒暄）。"""
     for msg in messages or []:
-        if msg.get("role") != "user":
+        role = msg.get("role") if isinstance(msg, dict) else getattr(msg, "role", None)
+        content_value = msg.get("content") if isinstance(msg, dict) else getattr(msg, "content", None)
+        if role != "user":
             continue
-        content = (msg.get("content") or "").strip()
+        content = (content_value or "").strip()
         if not content:
             continue
         if content.lower() in GREETING_WORDS or len(content) <= 2:

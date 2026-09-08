@@ -5,6 +5,7 @@ Qdrant Client 单例 — 复用 gRPC 连接模式进行向量存储与检索。
 与 mem0_client.py 中的 QdrantClient 模式一致：gRPC 端口 6334。
 """
 import uuid
+import os
 from typing import Optional
 
 from qdrant_client import QdrantClient
@@ -30,8 +31,8 @@ def _str_to_uuid(s: str) -> str:
     """将字符串 ID 转换为合法的 UUID 格式（基于 uuid5）。"""
     return str(uuid.uuid5(uuid.NAMESPACE_DNS, s))
 
-QDRANT_HOST = "localhost"
-QDRANT_GRPC_PORT = 6333
+QDRANT_HOST = os.getenv("QDRANT_HOST", "localhost")
+QDRANT_HTTP_PORT = int(os.getenv("QDRANT_PORT", "6333"))
 COLLECTION_NAME = "agent_mem_generation"  # 独立 collection，不影响 mem0 的 openmemory
 VECTOR_DIM = 1024  # bge-m3 维度
 DEFAULT_SCORE_THRESHOLD = 0.5
@@ -47,7 +48,7 @@ class QdrantClientSingleton:
     def initialize(self) -> bool:
         """初始化 Qdrant gRPC 连接并确保 collection 存在。"""
         try:
-            self._client = QdrantClient(host=QDRANT_HOST, port=QDRANT_GRPC_PORT, prefer_grpc=False, timeout=10)
+            self._client = QdrantClient(host=QDRANT_HOST, port=QDRANT_HTTP_PORT, prefer_grpc=False, timeout=10)
 
             # 确保 collection 存在
             collections = self._client.get_collections()
@@ -76,7 +77,7 @@ class QdrantClientSingleton:
                         sparse_vectors_config={"keyword": SparseVectorParams(modifier=Modifier.IDF)},
                     )
 
-            logger.info(f"Qdrant client initialized: {QDRANT_HOST}:{QDRANT_GRPC_PORT}, collection='{self._collection_name}'")
+            logger.info(f"Qdrant client initialized: {QDRANT_HOST}:{QDRANT_HTTP_PORT}, collection='{self._collection_name}'")
             return True
         except Exception as e:
             logger.error(f"Qdrant initialization failed: {e}")

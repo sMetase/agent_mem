@@ -26,6 +26,7 @@ services:
     container_name: mem-postgres
     restart: unless-stopped
     environment:
+      TZ: ${TZ:-Asia/Shanghai}
       POSTGRES_USER: ${POSTGRES_USER:-memuser}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-mempassword}
       POSTGRES_DB: ${POSTGRES_DB:-agent_memory}
@@ -49,6 +50,8 @@ services:
       - "${QDRANT_GRPC_PORT:-6334}:6334"
     volumes:
       - qdrant_data:/qdrant/storage
+    environment:
+      TZ: ${TZ:-Asia/Shanghai}
 
   redis:
     image: redis:7-alpine
@@ -56,6 +59,8 @@ services:
     restart: unless-stopped
     ports:
       - "${REDIS_PORT:-6379}:6379"
+    environment:
+      TZ: ${TZ:-Asia/Shanghai}
 
   kafka:
     image: apache/kafka:3.7.2
@@ -65,6 +70,7 @@ services:
       - "${KAFKA_PORT:-9092}:9092"
       - "9093:9093"
     environment:
+      TZ: ${TZ:-Asia/Shanghai}
       KAFKA_NODE_ID: 0
       KAFKA_PROCESS_ROLES: controller,broker
       KAFKA_CONTROLLER_QUORUM_VOTERS: 0@kafka:9094
@@ -88,6 +94,7 @@ services:
     ports:
       - "${KAFKA_UI_PORT:-8080}:8080"
     environment:
+      TZ: ${TZ:-Asia/Shanghai}
       KAFKA_CLUSTERS_0_NAME: local
       KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9093
     depends_on:
@@ -104,6 +111,7 @@ services:
     depends_on:
       - qdrant
     environment:
+      TZ: ${TZ:-Asia/Shanghai}
       QDRANT_HOST: ${QDRANT_HOST:-qdrant}
       QDRANT_PORT: ${QDRANT_PORT:-6333}
       LLM_PROVIDER: openai
@@ -126,6 +134,7 @@ services:
     env_file:
       - ./.env
     environment:
+      TZ: ${TZ:-Asia/Shanghai}
       DB_HOST: ${DB_HOST:-postgres}
       DB_PORT: ${DB_PORT:-5432}
       DB_USER: ${DB_USER:-memuser}
@@ -175,6 +184,8 @@ services:
       - "${FRONTEND_PORT:-8081}:80"
     depends_on:
       - backend
+    environment:
+      TZ: ${TZ:-Asia/Shanghai}
 
 volumes:
   pgdata:
