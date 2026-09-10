@@ -9,6 +9,7 @@ provider credentials.
 """
 
 import asyncio
+import json
 import os
 from uuid import uuid4
 
@@ -58,7 +59,9 @@ def _tool_data(result):
     return result
 
 
-async def _wait_for_memory(client: Client, query: str) -> dict:
+async def _wait_for_memory(
+    client: Client, query: str, expected_text: str | None = None
+) -> dict:
     deadline = asyncio.get_running_loop().time() + WAIT_TIMEOUT_SECONDS
     last_result = None
 
@@ -74,7 +77,10 @@ async def _wait_for_memory(client: Client, query: str) -> dict:
             },
         )
         last_result = _tool_data(result)
-        if last_result.get("results"):
+        result_text = json.dumps(last_result, ensure_ascii=False)
+        if last_result.get("results") and (
+            expected_text is None or expected_text in result_text
+        ):
             return last_result
         await asyncio.sleep(POLL_INTERVAL_SECONDS)
 
@@ -93,6 +99,49 @@ async def test_mcp_memory_write_and_retrieval_e2e():
         tools = await client.list_tools()
         tool_names = {tool.name for tool in tools}
         assert EXPECTED_TOOLS <= tool_names
+
+        # Seed two prior sessions through the public MCP API. This exercises
+        # historical-session ingestion before testing retrieval.
+        historical_sessions = [
+            (
+                "2026-09-01T10:00:00+08:00",
+                "用户确定后端数据库使用 PostgreSQL，向量检索使用 Qdrant。",
+            ),
+            (
+                "2026-09-05T15:30:00+08:00",
+                "用户偏好简洁的中文回答，代码示例主要使用 Python。",
+            ),
+        ]
+        for session_time, session_summary in historical_sessions:
+            history_session_result = await client.call_tool(
+                "create_session",
+                {
+                    "user_id": USER_ID,
+                    "agent_id": AGENT_ID,
+                    "scene_id": SCENE_ID,
+                },
+            )
+            history_session_id = _tool_data(history_session_result)["session_id"]
+            history_write_result = await client.call_tool(
+                "write_session_summary",
+                {
+                    "user_id": USER_ID,
+                    "agent_id": AGENT_ID,
+                    "scene_id": SCENE_ID,
+                    "session_id": history_session_id,
+                    "session_summary": session_summary,
+                    "session_time": session_time,
+                    "session_source": "mcp_e2e_history_seed",
+                },
+            )
+            assert _tool_data(history_write_result)["accepted"] is True
+
+        historical_search_data = await _wait_for_memory(
+            client,
+            "用户之前确定的数据库和向量检索方案是什么？",
+            expected_text="PostgreSQL",
+        )
+        assert historical_search_data["results"]
 
         session_result = await client.call_tool(
             "create_session",
@@ -127,7 +176,11 @@ async def test_mcp_memory_write_and_retrieval_e2e():
         write_data = _tool_data(write_result)
         assert write_data["accepted"] is True
 
-        search_data = await _wait_for_memory(client, "用户有什么回答偏好？")
+        search_data = await _wait_for_memory(
+            client,
+            "用户有什么回答偏好？",
+            expected_text="Python",
+        )
         assert search_data["results"]
 
         context_result = await client.call_tool(

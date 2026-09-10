@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 
 from sqlalchemy import (
     Column, String, Text, Integer, Float, Boolean,
-    DateTime, BigInteger, JSON, Index, text,
+    DateTime, BigInteger, JSON, Index, UniqueConstraint, text,
 )
 from sqlalchemy.dialects.postgresql import UUID, ARRAY
 from sqlalchemy.orm import relationship
@@ -430,7 +430,11 @@ class Persona(Base):
     updated_at = Column(DateTime(timezone=True), default=_now, onupdate=_now)
 
     __table_args__ = (
-        Index("idx_persona_user_scene", "user_id", "scene_id"),
+        UniqueConstraint(
+            "user_id",
+            "scene_id",
+            name="uq_t_persona_user_scene",
+        ),
     )
 
 
