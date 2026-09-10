@@ -34,6 +34,7 @@ def _str_to_uuid(s: str) -> str:
 QDRANT_HOST = os.getenv("QDRANT_HOST", "localhost")
 QDRANT_HTTP_PORT = int(os.getenv("QDRANT_PORT", "6333"))
 COLLECTION_NAME = "agent_mem_generation"  # 独立 collection，不影响 mem0 的 openmemory
+SPARSE_VECTOR_NAME = "bm25"
 VECTOR_DIM = 1024  # bge-m3 维度
 DEFAULT_SCORE_THRESHOLD = 0.5
 
@@ -58,9 +59,12 @@ class QdrantClientSingleton:
                 self._client.create_collection(
                     collection_name=self._collection_name,
                     vectors_config=VectorParams(size=VECTOR_DIM, distance=Distance.COSINE),
-                    sparse_vectors_config={"keyword": SparseVectorParams(modifier=Modifier.IDF)},
+                    sparse_vectors_config={SPARSE_VECTOR_NAME: SparseVectorParams(modifier=Modifier.IDF)},
                 )
-                logger.info(f"Qdrant collection '{self._collection_name}' created (dim={VECTOR_DIM}, sparse=keyword/IDF)")
+                logger.info(
+                    f"Qdrant collection '{self._collection_name}' created "
+                    f"(dim={VECTOR_DIM}, sparse={SPARSE_VECTOR_NAME}/IDF)"
+                )
             else:
                 # 验证维度
                 info = self._client.get_collection(self._collection_name)
@@ -74,7 +78,7 @@ class QdrantClientSingleton:
                     self._client.create_collection(
                         collection_name=self._collection_name,
                         vectors_config=VectorParams(size=VECTOR_DIM, distance=Distance.COSINE),
-                        sparse_vectors_config={"keyword": SparseVectorParams(modifier=Modifier.IDF)},
+                        sparse_vectors_config={SPARSE_VECTOR_NAME: SparseVectorParams(modifier=Modifier.IDF)},
                     )
 
             logger.info(f"Qdrant client initialized: {QDRANT_HOST}:{QDRANT_HTTP_PORT}, collection='{self._collection_name}'")
@@ -207,7 +211,7 @@ class QdrantClientSingleton:
             hits = self.client.query_points(
                 collection_name=self._collection_name,
                 query=sparse_vector,
-                using="keyword",
+                using=SPARSE_VECTOR_NAME,
                 query_filter=Filter(must=must_conditions),
                 limit=top_k,
             )
@@ -251,7 +255,7 @@ class QdrantClientSingleton:
                 named = {"": vectors[i]}
                 if sparse_vectors and i < len(sparse_vectors) and sparse_vectors[i]:
                     sv = sparse_vectors[i]
-                    named["keyword"] = SparseVector(
+                    named[SPARSE_VECTOR_NAME] = SparseVector(
                         indices=list(sv.keys()),
                         values=list(sv.values()),
                     )
