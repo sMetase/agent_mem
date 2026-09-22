@@ -11,7 +11,7 @@ L3 画像生成 — 从 L2 场景块抽象出长期稳定画像（persona 自由
 from datetime import datetime, timezone
 from uuid import uuid4
 
-from sqlalchemy import select, func
+from sqlalchemy import select, func, text
 
 from app.core.logger import get_logger
 from app.models.base import Memory, Persona, SceneBlock
@@ -92,24 +92,35 @@ async def generate_persona(db, user_id: str, scene_id: str) -> dict:
     )
     last_seq_id = max_seq.scalar() or 0
 
-    # upsert：唯一约束 + ON CONFLICT DO UPDATE，并发安全，避免重复 persona
-    from sqlalchemy.dialects.postgresql import insert as pg_insert
-    stmt = pg_insert(Persona).values(
-        persona_id=_gen_persona_id(),
-        user_id=user_id,
-        scene_id=scene_id,
-        content=content,
-        last_persona_time=now,
-        last_seq_id=last_seq_id,
-    ).on_conflict_do_update(
-        index_elements=["user_id", "scene_id"],
-        set_={
-            "content": content,
-            "last_persona_time": now,
-            "last_seq_id": last_seq_id,
-        },
+    # upsert：Oracle MERGE，按 (user_id, scene_id) 唯一键更新或插入，并发安全
+    _MERGE_SQL = text(
+        """
+        MERGE INTO t_persona tgt
+        USING (SELECT
+                 :persona_id AS persona_id, :user_id AS user_id, :scene_id AS scene_id,
+                 :content AS content, :last_persona_time AS last_persona_time,
+                 :last_seq_id AS last_seq_id
+               FROM dual) src
+        ON (tgt.user_id = src.user_id AND tgt.scene_id = src.scene_id)
+        WHEN MATCHED THEN
+            UPDATE SET content = src.content,
+                       last_persona_time = src.last_persona_time,
+                       last_seq_id = src.last_seq_id,
+                       updated_at = SYSTIMESTAMP
+        WHEN NOT MATCHED THEN
+            INSERT (persona_id, user_id, scene_id, content, last_persona_time, last_seq_id, created_at, updated_at)
+            VALUES (src.persona_id, src.user_id, src.scene_id, src.content,
+                    src.last_persona_time, src.last_seq_id, SYSTIMESTAMP, SYSTIMESTAMP)
+        """
     )
-    await db.execute(stmt)
+    await db.execute(_MERGE_SQL, {
+        "persona_id": _gen_persona_id(),
+        "user_id": user_id,
+        "scene_id": scene_id,
+        "content": content,
+        "last_persona_time": now,
+        "last_seq_id": last_seq_id,
+    })
     await db.commit()
 
     # 回查 persona_id（insert 用新 id，update 保持原 id）

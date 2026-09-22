@@ -17,7 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import MemoryGenerationError
 from app.core.logger import get_logger
-from app.core.qdrant_client import QdrantClientSingleton, qdrant_client as _qdrant_singleton
+from app.core.oracle_client import OracleVectorStore, oracle_vector_store as _oracle_singleton
 from app.models.base import Memory, MemoryRelation
 from app.services.embedding_client import EmbeddingClient, embedding_client as _embedding_singleton
 from app.services.llm_client import LLMClient, llm_client as _llm_singleton
@@ -104,14 +104,14 @@ class MemoryPipeline:
         self,
         llm: Optional[LLMClient] = None,
         embedding: Optional[EmbeddingClient] = None,
-        qdrant: Optional[QdrantClientSingleton] = None,
+        oracle: Optional[OracleVectorStore] = None,
         dedup_weights: Optional[tuple[float, float, float]] = None,
         dedup_thresholds: Optional[tuple[float, float, float]] = None,
         enable_llm_audit: Optional[bool] = None,
     ) -> None:
         self._llm = llm
         self._embedding = embedding
-        self._qdrant = qdrant
+        self._oracle = oracle
         self.dedup_weights = dedup_weights or self.DEDUP_WEIGHTS
         self.dedup_thresholds = dedup_thresholds or self.DEDUP_THRESHOLDS
         self.enable_llm_audit = enable_llm_audit if enable_llm_audit is not None else self.LLM_AUDIT_ENABLED
@@ -136,10 +136,10 @@ class MemoryPipeline:
         return self._embedding
 
     @property
-    def qdrant(self) -> QdrantClientSingleton:
-        if self._qdrant is None:
-            self._qdrant = _qdrant_singleton
-        return self._qdrant
+    def oracle(self) -> OracleVectorStore:
+        if self._oracle is None:
+            self._oracle = _oracle_singleton
+        return self._oracle
 
     def _ensure_initialized(self) -> None:
         """惰性初始化所有子服务。"""
@@ -150,7 +150,7 @@ class MemoryPipeline:
         if self._dedup is None:
             vw, kw, iw = self.dedup_weights
             self._dedup = DedupService(
-                self.embedding, self.qdrant,
+                self.embedding, self.oracle,
                 vector_weight=vw, keyword_weight=kw, identity_weight=iw,
             )
 
@@ -274,7 +274,7 @@ class MemoryPipeline:
 
         # ========== Phase 3: Dedup ==========
         logger.info(f"Pipeline Phase 3/4: Deduplicating {len(candidates)} candidates")
-        if db is not None and self.qdrant.is_available:
+        if db is not None and self.oracle.is_available:
             try:
                 dedup_results: list[DedupResult] = await self._dedup.process_candidates(
                     candidates=candidates,
@@ -301,7 +301,7 @@ class MemoryPipeline:
                     for c in candidates
                 ]
         else:
-            # 无 DB 或无 Qdrant → 全部保留
+            # 无 DB 或无 Oracle 26ai → 全部保留
             dedup_results = [
                 DedupResult(
                     action=DedupAction.KEEP_NEW,
@@ -419,7 +419,7 @@ class MemoryPipeline:
         source_record_ids: Optional[list[str]] = None,
         candidate_quality_map: Optional[dict[int, "QualityReport"]] = None,
     ) -> None:
-        """将去重结果持久化到 PostgreSQL 和向量存储。"""
+        """将去重结果持久化到 Oracle 26ai 和向量存储。"""
         for i, dr in enumerate(dedup_results):
             if dr.action == DedupAction.DISCARD:
                 continue

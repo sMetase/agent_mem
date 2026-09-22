@@ -370,7 +370,7 @@ async def _compute_generation_summary(
 # ── Retrieval Signal Distribution ─────────────────────────
 # 当前记录的检索模式（retrieval_mode）：
 #
-#   hybrid  → Qdrant 向量检索 + PostgreSQL 元数据过滤
+#   hybrid  → Oracle 26ai 向量检索 + Oracle 26ai 元数据过滤
 #             对应正常 search() 路径
 #   keyword → DB-only 关键词/文本匹配
 #             对应 _db_only_search() 降级路径（向量服务不可用时）

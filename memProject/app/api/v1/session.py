@@ -190,8 +190,8 @@ async def session_close(
          - preference / fact  → 升级为长期记忆 (session_id=NULL)
          - 其他类型           → 压缩池
       3. 压缩池非空 → LLM 生成摘要 → INSERT 新记忆
-      4. 压缩池记忆 → status='expired' + 删除 T_MEMORY_VECTOR + Qdrant
-      5. 新摘要 → 向量化 + T_MEMORY_VECTOR + Qdrant
+      4. 压缩池记忆 → status='expired' + 删除 T_MEMORY_VECTOR + Oracle 26ai
+      5. 新摘要 → 向量化 + T_MEMORY_VECTOR + Oracle 26ai
     """
     sid = session_id.strip().lower()
 

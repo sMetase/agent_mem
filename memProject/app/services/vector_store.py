@@ -2,21 +2,18 @@
 """
 向量存储抽象层。
 
-业务层只依赖 VectorStore 接口，未来可切换 Qdrant / Oracle 23ai 等实现。
-- 语义检索：dense 向量相似度
-- 关键词检索：sparse 向量（jieba + 词频，Qdrant IDF modifier 加权）
+业务层只依赖 VectorStore 接口，当前实现为 Oracle 26ai（AI Vector Search，T_MEMORY 同表）。
+- 语义检索：t_memory.embedding 的 VECTOR 类型 + VECTOR_DISTANCE 相似度
+- 关键词检索：Oracle Text（CONTEXT 索引在 content 上）+ CONTAINS/SCORE
 - 实体检索：实体表 boost（暂不做）
 
-设计（对应《前后端联动开发问题》检索三路 + 存储抽象决策）：
-- point id = 确定性映射(memory_id)，payload 存 memory_id → **无桥接表**
-- 未来 Oracle 23ai（向量+关系同表）也无需桥接表，接口一致
+设计：memory_id 即 Oracle T_MEMORY 行主键，「向量 + 关系同表」，无需桥接表。
 """
 
 import asyncio
 from abc import ABC, abstractmethod
 
-from app.core.qdrant_client import qdrant_client as _qdrant
-from app.services.sparse_encoder import text_to_sparse
+from app.core.oracle_client import oracle_vector_store as _oracle
 
 RRF_K = 60
 
@@ -88,8 +85,8 @@ class VectorStore(ABC):
         """删除记忆向量。"""
 
 
-class QdrantVectorStore(VectorStore):
-    """Qdrant 实现（dense + sparse，point id = UUID5(memory_id)，payload 含 memory_id，无桥接表）。"""
+class OracleVectorStoreImpl(VectorStore):
+    """Oracle 26ai 实现（向量 + 关系同表，memory_id 即 t_memory 行主键，无需桥接表）。"""
 
     def __init__(self, client) -> None:
         self._client = client
@@ -101,13 +98,13 @@ class QdrantVectorStore(VectorStore):
         metadata: dict,
         content: str = "",
     ) -> None:
-        sparse = text_to_sparse(content) if content else None
+        # Oracle 同表方案：向量以 memory_id 定位 UPDATE t_memory.embedding；
+        # 关键词检索走 Oracle Text（content 列），无需 sparse 向量。
         await asyncio.to_thread(
             self._client.upsert_vectors,
             vectors=[vector],
             payloads=[{**metadata, "memory_id": memory_id}],
             ids=[memory_id],
-            sparse_vectors=[sparse] if sparse else None,
         )
 
     async def search(
@@ -170,4 +167,4 @@ class QdrantVectorStore(VectorStore):
 
 
 # 模块级单例
-vector_store = QdrantVectorStore(_qdrant)
+vector_store = OracleVectorStoreImpl(_oracle)

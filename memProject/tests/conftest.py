@@ -30,9 +30,7 @@ def _sync_engine():
     from sqlalchemy import create_engine
     from app.core.config import get_settings
     s = get_settings()
-    return create_engine(
-        f"postgresql://{s.database.user}:{s.database.password}@{s.database.host}:{s.database.port}/{s.database.database}"
-    )
+    return create_engine(s.database.sync_url)
 
 
 # ============================================================
@@ -93,7 +91,7 @@ def stats_test_data():
                     agent_id="agent_other", scene_id="scene_other", content=f"Stats agent #{i}")
 
         # 第 1 条 deleted
-        conn.execute(text("UPDATE t_memory SET status='deleted', deleted_at=NOW() WHERE memory_id=:mid"),
+        conn.execute(text("UPDATE t_memory SET status='deleted', deleted_at=SYSTIMESTAMP WHERE memory_id=:mid"),
                      {"mid": memory_ids[0]})
 
         trans.commit()
@@ -162,7 +160,7 @@ def context_test_data():
         # 1 deleted
         mid_del = f"mem_{uuid4().hex[:16]}"
         _insert(memory_id=mid_del, memory_type="fact", content="已删除记忆", status="deleted")
-        conn.execute(text("UPDATE t_memory SET deleted_at=NOW() WHERE memory_id=:mid"), {"mid": mid_del})
+        conn.execute(text("UPDATE t_memory SET deleted_at=SYSTIMESTAMP WHERE memory_id=:mid"), {"mid": mid_del})
 
         # 1 archived
         _insert(memory_type="fact", content="归档记忆", status="archived")
@@ -198,7 +196,7 @@ def p13_test_memory():
                 created_at, updated_at)
             VALUES (:id, :mid, :uid, 'agent_test_fixture', 'scene_dev_default',
                 'P13测试', 'fact', 'active', 'user', 'test',
-                NOW(), NOW())
+                SYSTIMESTAMP, SYSTIMESTAMP)
         """), {"id": f"id_{uuid4().hex[:16]}", "mid": mid, "uid": uid})
         conn.commit()
         yield uid, mid, _test_headers(uid)

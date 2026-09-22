@@ -36,23 +36,37 @@ class ServerConfig(BaseSettings):
 
 
 class DatabaseConfig(BaseSettings):
-    driver: str = "postgresql+asyncpg"
+    """Oracle 26ai 数据库配置（关系表 + AI Vector Search 共用同一个 PDB）。"""
+    driver: str = "oracle+oracledb_async"
     host: str = "localhost"
-    port: int = 5432
-    user: str = "memuser"
-    password: str = "mempassword"
-    database: str = "agent_memory"
+    port: int = 1521
+    user: str = "DEVUSER"
+    password: str = "DevPassword123"
+    database: str = "FREEPDB1"   # Oracle 服务名（PDB）
+    service: str = "FREEPDB1"    # 显式 service_name，优先于 database
     pool_size: int = 10
     max_overflow: int = 5
     pool_recycle: int = 3600
 
     @property
+    def service_name(self) -> str:
+        return self.service or self.database
+
+    @property
     def url(self) -> str:
-        return f"{self.driver}://{self.user}:{self.password}@{self.host}:{self.port}/{self.database}"
+        # 注意：不要带 encoding/nencoding 查询参数 —— oracledb 的 async dialect 会
+        # 把它们当 kwargs 传给 connect_async()，而它不接受，导致 TypeError。UTF-8 本就是默认。
+        return (
+            f"{self.driver}://{self.user}:{self.password}@{self.host}:{self.port}/"
+            f"?service_name={self.service_name}"
+        )
 
     @property
     def sync_url(self) -> str:
-        return f"postgresql://{self.user}:{self.password}@{self.host}:{self.port}/{self.database}"
+        return (
+            f"oracle+oracledb://{self.user}:{self.password}@{self.host}:{self.port}/"
+            f"?service_name={self.service_name}"
+        )
 
 
 class Mem0Config(BaseSettings):

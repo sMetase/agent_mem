@@ -18,7 +18,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastmcp.utilities.lifespan import combine_lifespans
 
 from app.core.config import get_settings
-from app.core.database import check_db_connection, create_pgvector_extension
+from app.core.database import check_db_connection, ensure_oracle_schema
 from app.core.logger import setup_logging, get_logger
 from app.middleware import LoggingMiddleware, register_exception_handlers, AuthMiddleware, ApiLogMiddleware
 from app.services.mem0_client import mem0_client
@@ -41,7 +41,12 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         logger.error("Database connection failed")
     else:
         logger.info("Database connection OK")
-        await create_pgvector_extension()
+        # 幂等建表 + 向量索引 + Oracle Text 全文索引（Oracle 26ai 同库方案）
+        try:
+            await ensure_oracle_schema()
+        except Exception as e:
+            logger.warning(f"Oracle schema bootstrap failed (non-fatal, 后续写入可能受影响): {e}")
+
 
     # 初始化 mem0 客户端
     try:

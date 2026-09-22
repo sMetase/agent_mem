@@ -66,7 +66,7 @@ async def _rate_per_min(db, model, col) -> int:
     """最近 60 秒该表产出/更新条数。"""
     return (await db.execute(
         select(func.count()).select_from(model)
-        .where(col >= text("now() - interval '1 minute'"))
+        .where(col >= text("SYSTIMESTAMP - INTERVAL '1' MINUTE"))
     )).scalar() or 0
 
 

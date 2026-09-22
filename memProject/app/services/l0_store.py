@@ -8,10 +8,11 @@ L0 落库 —— write 降级路径与 mq_consumer 共用的幂等落库模块�
 - 抽取不走 Kafka，由 L1 worker 游标轮询消费 pending_extract 的 L0。
 """
 
+import json
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.logger import get_logger
@@ -151,15 +152,35 @@ def build_l0_records(
 
 
 async def persist_l0(db: AsyncSession, records: list[dict]) -> int:
-    """幂等落 L0：record_id 冲突跳过（ON CONFLICT DO NOTHING）。返回实际落库条数。"""
+    """幂等落 L0：record_id 冲突跳过（Oracle MERGE WHEN NOT MATCHED）。返回实际落库条数。"""
     if not records:
         return 0
 
-    stmt = pg_insert(InteractionRecord).values(records).on_conflict_do_nothing(
-        index_elements=[InteractionRecord.record_id]
+    _MERGE_SQL = text(
+        """
+        MERGE INTO t_interaction_record tgt
+        USING (SELECT :record_id AS record_id FROM dual) src
+        ON (tgt.record_id = src.record_id)
+        WHEN NOT MATCHED THEN
+            INSERT (id, record_id, user_id, agent_id, scene_id, session_id, task_id,
+                    interaction_type, turn_index, role, content, content_type,
+                    processed, status, recorded_at, extra_meta)
+            VALUES (t_interaction_record_id_seq.nextval,
+                    :record_id, :user_id, :agent_id, :scene_id, :session_id, :task_id,
+                    :interaction_type, :turn_index, :role, :content, :content_type,
+                    :processed, :status, :recorded_at, :extra_meta)
+        """
     )
-    result = await db.execute(stmt)
-    return result.rowcount or 0
+
+    count = 0
+    for rec in records:
+        bind = dict(rec)
+        # Oracle 列存 CLOB：dict/list 先序列化为 JSON 文本再绑定
+        if isinstance(bind.get("extra_meta"), (dict, list)):
+            bind["extra_meta"] = json.dumps(bind["extra_meta"], ensure_ascii=False, default=str)
+        result = await db.execute(_MERGE_SQL, bind)
+        count += result.rowcount or 0
+    return count
 
 
 GREETING_WORDS = {"你好", "您好", "在吗", "hi", "hello", "哈喽", "hey"}

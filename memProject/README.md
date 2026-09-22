@@ -2,6 +2,14 @@
 
 基于 [mem0](https://github.com/mem0ai/mem0) 构建的智能体记忆管理中台，提供 REST API 和 memProject MCP Server。
 
+> ⚠ **存储已迁移到 Oracle 26ai（2026-09-21）**：已弃用 PostgreSQL(关系表) 和 Qdrant(向量库)，
+> 关系表 + AI Vector Search **同库同表** 全部落在 Oracle 26ai 的 FREEPDB1（用户 DEVUSER，端口 1521）：
+> - 关系表：SQLAlchemy(async) + oracledb 驱动管理（t_memory / t_user …）
+> - 向量：`t_memory.embedding` 用 Oracle `VECTOR(1024, FLOAT32)`，`VECTOR_DISTANCE` 语义检索
+> - 关键词：jieba 分词 + `INSTR(content)` 多候选命中（中文友好，不依赖 Oracle Text 词法）
+> - 初始化：`python scripts/oracle_bootstrap.py`（幂等建表 + 向量/全文索引），应用启动时自动执行
+> 连接配置见 `config/settings.yaml` 的 `database` 段与 `.env` 的 `ORACLE_*`。
+
 ## 架构
 
 ```
@@ -9,7 +17,7 @@
     │
     ├── REST  → memProject FastAPI (:8000) ─┐
     │                                       ├── OpenMemory MCP (:8765, 内部存储)
-    │                                       ├── PostgreSQL / Qdrant
+    │                                       ├── Oracle 26ai（关系表 + AI Vector Search 同库）
     └── MCP   → memProject MCP (:8000/mcp/) ─┴── 高级工具适配层
 ```
 
@@ -20,7 +28,7 @@
 | 软件 | 说明 |
 |------|------|
 | Python 3.12+ | 运行环境 |
-| Docker Desktop | PostgreSQL + Qdrant |
+| Oracle 26ai Free | 关系表 + AI Vector Search 同库（FREEPDB1 / DEVUSER，端口 1521，见上方迁移说明） |
 | Git | 拉代码 |
 | DeepSeek API Key | [platform.deepseek.com](https://platform.deepseek.com) 注册获取 |
 | 硅基流动 API Key | [siliconflow.cn](https://siliconflow.cn) 注册获取 |

@@ -3,7 +3,7 @@
 Memory Dedup Service — 单层记忆去重与融合引擎（v3）。
 
 去重算法流程：
-  1. 为每个候选并行搜相似记忆（Qdrant，扩大候选范围）
+  1. 为每个候选并行搜相似记忆（Oracle 26ai，扩大候选范围）
   2. LLM 批量判断动作 + 输出「局部整合」后的内容
   3. 应用决策（含审计 + 动态权重调整）
 
@@ -28,7 +28,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.logger import get_logger
-from app.core.qdrant_client import QdrantClientSingleton
+from app.core.oracle_client import OracleVectorStore
 from app.models.base import Memory, DedupAudit
 from app.services.embedding_client import EmbeddingClient
 from app.services.llm_config import resolve_llm_config
@@ -86,14 +86,14 @@ class DedupService:
     def __init__(
         self,
         embedding_client: EmbeddingClient,
-        qdrant: QdrantClientSingleton,
+        oracle: OracleVectorStore,
         vector_weight: float = 0.5,
         keyword_weight: float = 0.3,
         identity_weight: float = 0.2,
     ) -> None:
         # 权重参数保留仅为向后兼容（v3 单层去重已不再使用关键词/标识权重）
         self._embedding = embedding_client
-        self._qdrant = qdrant
+        self._oracle = oracle
 
     async def process_candidates(
         self,
@@ -111,9 +111,9 @@ class DedupService:
         Returns:
             DedupResult 列表
         """
-        if not self._qdrant.is_available:
-            logger.warning("Qdrant unavailable, skipping dedup — all candidates KEEP_NEW")
-            return [self._make_keep_new(c, "Qdrant 不可用，跳过去重") for c in candidates]
+        if not self._oracle.is_available:
+            logger.warning("Oracle 26ai unavailable, skipping dedup — all candidates KEEP_NEW")
+            return [self._make_keep_new(c, "Oracle 26ai 不可用，跳过去重") for c in candidates]
 
         results: list[DedupResult] = []
 

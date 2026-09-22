@@ -13,46 +13,12 @@
 # 服务端口：
 #   前端       8081
 #   后端       8000
-#   PostgreSQL 5433 -> 5432
-#   Qdrant     6333 / 6334
 #   Kafka      9092
 #   Kafka UI   8080
-#   MCP Server 8000/mcp
+#   Oracle 26ai 在宿主机独立运行（127.0.0.1:1521, PDB=FREEPDB1, DEVUSER）
 # ============================================================
 
 services:
-  postgres:
-    image: pgvector/pgvector:pg16
-    container_name: mem-postgres
-    restart: unless-stopped
-    environment:
-      TZ: ${TZ:-Asia/Shanghai}
-      POSTGRES_USER: ${POSTGRES_USER:-memuser}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-mempassword}
-      POSTGRES_DB: ${POSTGRES_DB:-agent_memory}
-    ports:
-      - "${POSTGRES_PORT:-5433}:5432"
-    volumes:
-      - pgdata:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-memuser} -d ${POSTGRES_DB:-agent_memory}"]
-      interval: 5s
-      timeout: 5s
-      retries: 12
-      start_period: 5s
-
-  qdrant:
-    image: qdrant/qdrant:latest
-    container_name: mem-qdrant
-    restart: unless-stopped
-    ports:
-      - "${QDRANT_HTTP_PORT:-6333}:6333"
-      - "${QDRANT_GRPC_PORT:-6334}:6334"
-    volumes:
-      - qdrant_data:/qdrant/storage
-    environment:
-      TZ: ${TZ:-Asia/Shanghai}
-
   redis:
     image: redis:7-alpine
     container_name: mem-redis
@@ -100,31 +66,6 @@ services:
     depends_on:
       - kafka
 
-  openmemory:
-    build:
-      context: ./mem0_repo/openmemory/api
-      dockerfile: Dockerfile
-    container_name: mem-openmemory
-    restart: unless-stopped
-    env_file:
-      - ./.env
-    depends_on:
-      - qdrant
-    environment:
-      TZ: ${TZ:-Asia/Shanghai}
-      QDRANT_HOST: ${QDRANT_HOST:-qdrant}
-      QDRANT_PORT: ${QDRANT_PORT:-6333}
-      LLM_PROVIDER: openai
-      LLM_MODEL: ${LLM_MODEL:-deepseek-chat}
-      LLM_API_KEY: ${DEEPSEEK_API_KEY}
-      LLM_BASE_URL: ${DEEPSEEK_BASE_URL:-https://api.deepseek.com/v1}
-      EMBEDDER_PROVIDER: openai
-      EMBEDDER_MODEL: ${EMBEDDER_MODEL:-BAAI/bge-m3}
-      EMBEDDER_API_KEY: ${SILICONFLOW_API_KEY}
-      EMBEDDER_BASE_URL: ${SILICONFLOW_BASE_URL:-https://api.siliconflow.cn/v1}
-      MCP_BASE_URL: ${MCP_BASE_URL:-http://openmemory:8765/mcp}
-    command: uvicorn main:app --host 0.0.0.0 --port 8765
-
   backend:
     build:
       context: ./memProject
@@ -133,15 +74,16 @@ services:
     restart: unless-stopped
     env_file:
       - ./.env
+    extra_hosts:
+      # 让 Linux 上容器能访问宿主机 Oracle（host.docker.internal → host-gateway）
+      - "host.docker.internal:host-gateway"
     environment:
       TZ: ${TZ:-Asia/Shanghai}
-      DB_HOST: ${DB_HOST:-postgres}
-      DB_PORT: ${DB_PORT:-5432}
-      DB_USER: ${DB_USER:-memuser}
-      DB_PASSWORD: ${DB_PASSWORD:-mempassword}
-      DB_NAME: ${DB_NAME:-agent_memory}
-      QDRANT_HOST: ${QDRANT_HOST:-qdrant}
-      QDRANT_PORT: ${QDRANT_PORT:-6333}
+      ORACLE_HOST: ${ORACLE_HOST:-host.docker.internal}
+      ORACLE_PORT: ${ORACLE_PORT:-1521}
+      ORACLE_USER: ${ORACLE_USER:-DEVUSER}
+      ORACLE_PASSWORD: ${ORACLE_PASSWORD:-DevPassword123}
+      ORACLE_SERVICE: ${ORACLE_SERVICE:-FREEPDB1}
       KAFKA_BOOTSTRAP_SERVERS: ${KAFKA_BOOTSTRAP_SERVERS:-kafka:9093}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
       DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY}
@@ -158,17 +100,12 @@ services:
     ports:
       - "${BACKEND_PORT:-8000}:8000"
     depends_on:
-      postgres:
-        condition: service_healthy
-      qdrant:
-        condition: service_started
       kafka:
         condition: service_started
       redis:
         condition: service_started
-      openmemory:
-        condition: service_started
-    command: sh -c "python -m alembic upgrade head && exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 1"
+    # Oracle 26ai 在宿主机独立运行；首次先幂等建表/建索引再启动服务
+    command: sh -c "python scripts/oracle_bootstrap.py && exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 1"
 
   frontend:
     build:
@@ -188,8 +125,6 @@ services:
       TZ: ${TZ:-Asia/Shanghai}
 
 volumes:
-  pgdata:
-  qdrant_data:
   kafka_data:
 
 networks:

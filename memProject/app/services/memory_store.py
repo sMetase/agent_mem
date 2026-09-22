@@ -3,9 +3,9 @@
 Memory Store Service — 记忆持久层的统一读写服务。
 
 提供:
-  - search: 语义搜索 (Qdrant) + 元数据过滤 (PostgreSQL)
+  - search: 语义搜索 (Oracle 26ai) + 元数据过滤 (Oracle 26ai)
   - list: 分页列出记忆
-  - delete_all: 清理用户全部记忆 (PostgreSQL + Qdrant)
+  - delete_all: 清理用户全部记忆 (Oracle 26ai + Oracle 26ai)
   - get_context: 检索并格式化为 Prompt 上下文片段
   - update_memory: 更新单条记忆
   - soft_delete: 软删除单条记忆
@@ -23,7 +23,7 @@ from sqlalchemy import select, delete, func, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.logger import get_logger
-from app.core.qdrant_client import QdrantClientSingleton, qdrant_client as _qdrant_singleton
+from app.core.oracle_client import OracleVectorStore, oracle_vector_store as _oracle_singleton
 from app.models.base import Memory
 from app.services.embedding_client import EmbeddingClient, embedding_client as _emb_singleton
 from app.services.memory_service import snapshot_memory_history
@@ -72,15 +72,15 @@ async def _log_retrieval(
 
 
 class MemoryStore:
-    """记忆存储服务 — 统一封装 PostgreSQL + Qdrant 读写。"""
+    """记忆存储服务 — 统一封装 Oracle 26ai + Oracle 26ai 读写。"""
 
     def __init__(
         self,
         embedding: Optional[EmbeddingClient] = None,
-        qdrant: Optional[QdrantClientSingleton] = None,
+        oracle: Optional[OracleVectorStore] = None,
     ) -> None:
         self._embedding = embedding
-        self._qdrant = qdrant
+        self._oracle = oracle
 
     @property
     def embedding(self) -> EmbeddingClient:
@@ -89,10 +89,10 @@ class MemoryStore:
         return self._embedding
 
     @property
-    def qdrant(self) -> QdrantClientSingleton:
-        if self._qdrant is None:
-            self._qdrant = _qdrant_singleton
-        return self._qdrant
+    def oracle(self) -> OracleVectorStore:
+        if self._oracle is None:
+            self._oracle = _oracle_singleton
+        return self._oracle
 
     # ================================================================
     # Search
@@ -132,12 +132,12 @@ class MemoryStore:
         rerank: bool = False,
     ) -> dict:
         """
-        语义搜索记忆 — Qdrant 向量检索 + PostgreSQL 元数据过滤。
+        语义搜索记忆 — Oracle 26ai 向量检索 + Oracle 26ai 元数据过滤。
 
         流程:
         1. 将 query 转为 embedding
-        2. 在 Qdrant 中搜索 Top-K*3 条候选
-        3. 回 PostgreSQL 加载完整 Memory 对象
+        2. 在 Oracle 26ai 中搜索 Top-K*3 条候选
+        3. 回 Oracle 26ai 加载完整 Memory 对象
         4. 按元数据条件过滤
         5. 返回 Top-K 条
 
@@ -162,10 +162,10 @@ class MemoryStore:
                 top_k=top_k,
             )
 
-        # Step 2: Qdrant search
+        # Step 2: Oracle 26ai search
         candidate_ids = set()
-        qdrant_scores: dict[str, float] = {}
-        if self.qdrant.is_available:
+        oracle_scores: dict[str, float] = {}
+        if self.oracle.is_available:
             try:
                 from app.services.vector_store import vector_store
                 hits = await vector_store.search(
@@ -176,11 +176,11 @@ class MemoryStore:
                 )
                 for h in hits:
                     candidate_ids.add(h["memory_id"])
-                    qdrant_scores[h["memory_id"]] = h["score"]
+                    oracle_scores[h["memory_id"]] = h["score"]
             except Exception as e:
                 logger.warning(f"vector search failed: {e}")
 
-        # Step 3: PostgreSQL query with metadata filters
+        # Step 3: Oracle 26ai query with metadata filters
         stmt = select(Memory).where(Memory.user_id == user_id)
         stmt = self._apply_status_filter(stmt, status)
 
@@ -197,7 +197,7 @@ class MemoryStore:
         if time_end:
             stmt = stmt.where(Memory.created_at <= time_end)
 
-        # If we have Qdrant candidates, filter by those IDs
+        # If we have Oracle 26ai candidates, filter by those IDs
         if candidate_ids:
             stmt = stmt.where(Memory.memory_id.in_(candidate_ids))
 
@@ -209,7 +209,7 @@ class MemoryStore:
         # Step 4: Build results with scores
         results = []
         for mem in memories:
-            score = qdrant_scores.get(mem.memory_id, 0.0)
+            score = oracle_scores.get(mem.memory_id, 0.0)
             raw_content = mem.content or ""
             results.append({
                 "memory_id": mem.memory_id,
@@ -233,7 +233,7 @@ class MemoryStore:
                 "updated_at": mem.updated_at.isoformat() if mem.updated_at else None,
             })
 
-        # Sort: Qdrant scores first (descending), then by created_at
+        # Sort: Oracle 26ai scores first (descending), then by created_at
         results.sort(
             key=lambda r: (
                 -(r["relevance_score"] or 0),
@@ -294,7 +294,7 @@ class MemoryStore:
         time_end: Optional[datetime] = None,
         top_k: int = 10,
     ) -> dict:
-        """纯 DB 检索（Qdrant 不可用时的降级方案）— 基于关键词 LIKE 匹配。"""
+        """纯 DB 检索（Oracle 26ai 不可用时的降级方案）— 基于关键词 LIKE 匹配。"""
         import time as time_module
         start = time_module.perf_counter()
 
@@ -518,8 +518,8 @@ class MemoryStore:
         db: AsyncSession,
         scene_id: Optional[str] = None,
     ) -> dict:
-        """清除用户全部记忆（PostgreSQL + Qdrant）。"""
-        # 先查询要删除的 memory_ids（用于清理 Qdrant）
+        """清除用户全部记忆（Oracle 26ai + Oracle 26ai）。"""
+        # 先查询要删除的 memory_ids（用于清理 Oracle 26ai）
         stmt = select(Memory.memory_id).where(Memory.user_id == user_id)
         if scene_id:
             stmt = stmt.where(Memory.scene_id == scene_id)
@@ -537,7 +537,7 @@ class MemoryStore:
             await db.execute(delete(MemoryRelation).where(MemoryRelation.source_memory_id.in_(memory_ids)))
             await db.execute(delete(MemoryRelation).where(MemoryRelation.target_memory_id.in_(memory_ids)))
 
-        # 删除 PostgreSQL 记录
+        # 删除 Oracle 26ai 记录
         delete_stmt = delete(Memory).where(Memory.user_id == user_id)
         if scene_id:
             delete_stmt = delete_stmt.where(Memory.scene_id == scene_id)
@@ -545,13 +545,13 @@ class MemoryStore:
         await db.execute(delete_stmt)
         await db.commit()
 
-        # 删除 Qdrant 向量
-        if memory_ids and self.qdrant.is_available:
+        # 删除 Oracle 26ai 向量
+        if memory_ids and self.oracle.is_available:
             try:
-                self.qdrant.delete_vectors(memory_ids)
-                logger.info(f"Deleted {len(memory_ids)} vectors from Qdrant")
+                self.oracle.delete_vectors(memory_ids)
+                logger.info(f"Deleted {len(memory_ids)} vectors from Oracle 26ai")
             except Exception as e:
-                logger.warning(f"Qdrant delete failed (non-fatal): {e}")
+                logger.warning(f"Oracle 26ai delete failed (non-fatal): {e}")
 
         return {
             "deleted_count": deleted_count,
@@ -738,11 +738,11 @@ class MemoryStore:
 
         await db.commit()
 
-        # 更新 Qdrant 向量（如果内容变了）
-        if content is not None and self.qdrant.is_available:
+        # 更新 Oracle 26ai 向量（如果内容变了）
+        if content is not None and self.oracle.is_available:
             try:
                 vec = await self.embedding.embed_single(content)
-                self.qdrant.upsert_vectors(
+                self.oracle.upsert_vectors(
                     vectors=[vec],
                     payloads=[{
                         "user_id": memory.user_id,
@@ -752,7 +752,7 @@ class MemoryStore:
                     ids=[memory_id],
                 )
             except Exception as e:
-                logger.warning(f"Qdrant update failed (non-fatal): {e}")
+                logger.warning(f"Oracle 26ai update failed (non-fatal): {e}")
 
         return {
             "memory_id": memory_id,
@@ -786,12 +786,12 @@ class MemoryStore:
 
         await db.commit()
 
-        # 从 Qdrant 中删除向量
-        if self.qdrant.is_available:
+        # 从 Oracle 26ai 中删除向量
+        if self.oracle.is_available:
             try:
-                self.qdrant.delete_vectors([memory_id])
+                self.oracle.delete_vectors([memory_id])
             except Exception as e:
-                logger.warning(f"Qdrant delete failed (non-fatal): {e}")
+                logger.warning(f"Oracle 26ai delete failed (non-fatal): {e}")
 
         # 自动清理：每次软删除后顺手清掉超过14天的已删数据
         purged = await self.purge_deleted(db, older_than_days=14, dry_run=False)
@@ -846,8 +846,8 @@ class MemoryStore:
 
         deleted_count = result.rowcount
 
-        # 同步清理 Qdrant（尽力而为）
-        if self.qdrant.is_available and deleted_count > 0:
+        # 同步清理 Oracle 26ai（尽力而为）
+        if self.oracle.is_available and deleted_count > 0:
             try:
                 ids_stmt = (
                     select(Memory.memory_id)
@@ -858,9 +858,9 @@ class MemoryStore:
                 )
                 remaining = (await db.execute(ids_stmt)).scalars().all()
                 if remaining:
-                    self.qdrant.delete_vectors(list(remaining))
+                    self.oracle.delete_vectors(list(remaining))
             except Exception as e:
-                logger.warning(f"Qdrant purge failed (non-fatal): {e}")
+                logger.warning(f"Oracle 26ai purge failed (non-fatal): {e}")
 
         logger.info(f"Purged {deleted_count} deleted memories older than {older_than_days} days")
         return {"deleted": deleted_count, "total_candidates": total, "dry_run": False}

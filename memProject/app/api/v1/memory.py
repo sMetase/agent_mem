@@ -4,7 +4,7 @@
 
 端点:
   POST /write       — 同步写入记忆
-  POST /search      — 语义检索记忆（Qdrant + PostgreSQL）
+  POST /search      — 语义检索记忆（Oracle 26ai + Oracle 26ai）
   POST /list        — 分页列出记忆
   POST /delete-all  — 清除全部记忆
   POST /context     — 检索并格式化为 Prompt 上下文
@@ -247,9 +247,9 @@ async def memory_search(
     agent_id: str = Depends(get_current_agent),
 ):
     """
-    语义检索历史记忆 — mem0 三路混合检索（语义 + BM25 + 实体）+ Qdrant 层全字段过滤（已启用 v2）。
+    语义检索历史记忆 — mem0 三路混合检索（语义 + BM25 + 实体）+ Oracle 26ai 层全字段过滤（已启用 v2）。
 
-    mem0 在 Qdrant 层完成所有过滤（user_id / scene_id / task_id / session_id /
+    mem0 在 Oracle 26ai 层完成所有过滤（user_id / scene_id / task_id / session_id /
     memory_type / status / created_at 时间范围），无需 PG 后过滤。
 
     当 mem0 不可用时，降级为 memory_store 路径。
@@ -681,7 +681,7 @@ async def memory_delete(
     db: AsyncSession = Depends(get_db),
     _agent: str = Depends(get_current_agent),
 ):
-    """软删除单条记忆（状态置为 deleted，从 Qdrant 移除向量）。"""
+    """软删除单条记忆（状态置为 deleted，从 Oracle 26ai 移除向量）。"""
     result = await memory_store.soft_delete(
         memory_id=body.memory_id,
         db=db,
@@ -728,7 +728,7 @@ async def memory_list(
     分页列出用户全部记忆。
 
     支持按 scene/task/session/agent/memory_type/memory_scope/time 过滤，
-    优先使用 MemoryStore 直查 PostgreSQL；查询为空时降级到 MCP 路径。
+    优先使用 MemoryStore 直查 Oracle 26ai；查询为空时降级到 MCP 路径。
     """
     try:
         result = await memory_store.list_memories(
@@ -776,7 +776,7 @@ async def memory_delete_all(
     _agent: str = Depends(get_current_agent),
 ):
     """
-    清除用户全部记忆 — PostgreSQL + Qdrant 双清。
+    清除用户全部记忆 — Oracle 26ai + Oracle 26ai 双清。
     同时清理 MCP/mem0 中的记忆（如果可用）。
     """
     store_result = await memory_store.delete_all_memories(

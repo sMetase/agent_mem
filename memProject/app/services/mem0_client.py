@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """
-mem0 记忆框架封装 — history_store=PG, vector_store=Qdrant。
+mem0 记忆框架封装 — history_store=PG 保持（可选），vector_store=Oracle 26ai(oracledb)。
+若当前装的 mem0 版本不支持 oracledb 提供者，初始化会失败并走降级（非致命）。
 """
 
 from typing import Optional
@@ -24,17 +25,20 @@ class Mem0Client:
     def initialize(self) -> bool:
         try:
             vector_cfg = dict(settings.mem0.vector_store.get("config", {}))
-            # Qdrant gRPC: HTTP API 有兼容性问题，注入预配置的 gRPC client
-            if settings.mem0.vector_store.get("provider") == "qdrant":
-                from qdrant_client import QdrantClient
-                host = vector_cfg.pop("host", "localhost")
-                grpc_port = vector_cfg.pop("grpc_port", 6334)
-                vector_cfg.pop("port", None)  # 不需要 HTTP port
-                vector_cfg["client"] = QdrantClient(host=host, port=grpc_port, prefer_grpc=True)
+            # Oracle 26ai: provider=oracledb，注入 connection_params（若 config 未显式提供）
+            if settings.mem0.vector_store.get("provider") == "oracledb":
+                if not vector_cfg.get("connection_params"):
+                    db = settings.database
+                    service = db.service or db.database
+                    vector_cfg["connection_params"] = {
+                        "user": db.user,
+                        "password": db.password,
+                        "dsn": f"{db.host}:{db.port}/{service}",
+                    }
 
             config = {
                 "vector_store": {
-                    "provider": settings.mem0.vector_store.get("provider", "qdrant"),
+                    "provider": settings.mem0.vector_store.get("provider", "oracledb"),
                     "config": vector_cfg,
                 },
                 "history_store": {

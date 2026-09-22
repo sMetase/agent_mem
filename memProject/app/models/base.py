@@ -1,19 +1,45 @@
 # -*- coding: utf-8 -*-
 """
-数据库物理模型 — PostgreSQL 12 张表。
+数据库物理模型 — Oracle 26ai（关系表 + AI Vector Search 同库，T_MEMORY 为向量同表）。
 """
 
+import json as _json
 import uuid
 from datetime import datetime, timezone
 
 from sqlalchemy import (
-    Column, String, Text, Integer, Float, Boolean,
-    DateTime, BigInteger, JSON, Index, UniqueConstraint, text,
+    Column, String, Text, Integer, Float, Boolean, TypeDecorator,
+    DateTime, BigInteger, Index, UniqueConstraint, text,
 )
-from sqlalchemy.dialects.postgresql import UUID, ARRAY
 from sqlalchemy.orm import relationship
 
 from app.core.database import Base
+
+
+class OracleJson(TypeDecorator):
+    """Oracle 兼容的 JSON 列 — Oracle 无通用 JSON 渲染器，改用 CLOB 存 JSON 文本。
+
+    SQLAlchemy ORM 读写 Python dict/list（自动序列化），对任意 Oracle 版本均稳定。
+    """
+    impl = Text
+    cache_ok = True
+
+    def process_bind_param(self, value, dialect):
+        if value is None or isinstance(value, str):
+            return value
+        return _json.dumps(value, ensure_ascii=False, default=str)
+
+    def process_result_value(self, value, dialect):
+        if value is None or isinstance(value, (dict, list)):
+            return value
+        try:
+            return _json.loads(value)
+        except Exception:
+            return value
+
+
+# 全模型统一用 OracleJson（原引用名 JSON 保持不变）
+JSON = OracleJson
 
 
 def _now() -> datetime:
@@ -164,7 +190,7 @@ class Memory(Base):
 
     id = Column(String(32), primary_key=True, default=_gen_uuid)
     memory_id = Column(String(64), unique=True, nullable=False, index=True)
-    seq_id = Column(BigInteger, nullable=False, server_default=text("nextval('t_memory_seq_id_seq')"), index=True)  # 单调自增，L2 增量游标用
+    seq_id = Column(BigInteger, nullable=False, server_default=text("t_memory_seq_id_seq.nextval"), index=True)  # 单调自增，L2 增量游标用（Oracle 序列）
     user_id = Column(String(128), nullable=False, index=True)
     agent_id = Column(String(128), nullable=True, index=True)
     scene_id = Column(String(128), nullable=True, index=True)
@@ -315,7 +341,7 @@ class ApiLog(Base):
     response_code = Column(Integer)
     error_code = Column(String(64), nullable=True)
     elapsed_ms = Column(Integer)
-    created_at = Column(DateTime(timezone=True), default=_now, index=True)
+    created_at = Column(DateTime(timezone=True), default=_now)  # 索引由 idx_api_log_time 提供（Oracle 不允许同列重复索引）
 
     __table_args__ = (
         Index("idx_api_log_time", "created_at"),

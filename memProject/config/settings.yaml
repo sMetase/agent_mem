@@ -13,28 +13,31 @@ server:
   port: 8000
   workers: 1
 
-# PostgreSQL 数据库配置
+# Oracle 26ai 数据库配置（关系表 + AI Vector Search 同库，指向 FREEPDB1）
 database:
-  driver: "postgresql+asyncpg"
-  host: "${DB_HOST:-localhost}"
-  port: "${DB_PORT:-5432}"
-  user: "${DB_USER:-memuser}"
-  password: "${DB_PASSWORD:-mempassword}"
-  database: "${DB_NAME:-agent_memory}"
+  driver: "oracle+oracledb_async"
+  host: "${ORACLE_HOST:-localhost}"
+  port: "${ORACLE_PORT:-1521}"
+  user: "${ORACLE_USER:-DEVUSER}"
+  password: "${ORACLE_PASSWORD:-DevPassword123}"
+  database: "${ORACLE_SERVICE:-FREEPDB1}"
+  service: "${ORACLE_SERVICE:-FREEPDB1}"
   pool_size: 10
   max_overflow: 5
   pool_recycle: 3600
 
-# mem0 配置（history_store 使用 PG，vector_store 使用 Qdrant）
+# mem0 配置（vector_store 使用 Oracle 26ai 的 oracledb 提供者，history_store 保留 PG 仅做兼容可选）
 mem0:
   vector_store:
-    provider: "qdrant"
+    provider: "oracledb"
     config:
-      host: "${QDRANT_HOST:-localhost}"
-      port: 6333
-      grpc_port: 6333
       embedding_model_dims: 1024
-      collection_name: "agent_mem_generation"
+      distance_metric: "COSINE"
+      collection_name: "MEMORIES"
+      connection_params:
+        user: "${ORACLE_USER:-DEVUSER}"
+        password: "${ORACLE_PASSWORD:-DevPassword123}"
+        dsn: "${ORACLE_HOST:-localhost}:${ORACLE_PORT:-1521}/${ORACLE_SERVICE:-FREEPDB1}"
   history_store:
     provider: "postgresql"
     config:
