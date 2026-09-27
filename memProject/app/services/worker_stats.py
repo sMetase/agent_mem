@@ -66,7 +66,9 @@ async def _rate_per_min(db, model, col) -> int:
     """最近 60 秒该表产出/更新条数。"""
     return (await db.execute(
         select(func.count()).select_from(model)
-        .where(col >= text("SYSTIMESTAMP - INTERVAL '1' MINUTE"))
+        # 时间列存的是 UTC naive TIMESTAMP(6)，用 SYS_EXTRACT_UTC(SYSTIMESTAMP) 显式对齐 UTC，
+        # 避免会话时区非 UTC 时隐式转换导致 1 小时偏移。
+        .where(col >= text("SYS_EXTRACT_UTC(SYSTIMESTAMP) - INTERVAL '1' MINUTE"))
     )).scalar() or 0
 
 

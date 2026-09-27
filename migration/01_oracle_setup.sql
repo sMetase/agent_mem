@@ -1,0 +1,35 @@
+-- ============================================================================
+-- Oracle 26ai 记忆系统 —— 应用用户初始化 SQL（与 setup_oracle_user.sh 等价，供 DBA/存档）
+-- 目标用户: DEVUSER / DevPassword123（可自行改）
+-- 前提: 以 SYSTEM（或带 DBA 的用户）连到 PDB（如 FREEPDB1）执行
+--   示例: sqlplus -s SYSTEM/OraclePassword123@localhost:1521/FREEPDB1 @01_oracle_setup.sql
+-- ============================================================================
+
+-- 0) 幂等：若已存在则删除后重建（会清掉该 schema 全部对象！仅首次迁移用）
+-- 如已初始化过、只想改密码/补授权，跳过这一步。
+-- BEGIN
+--   EXECUTE IMMEDIATE 'DROP USER DEVUSER CASCADE';
+-- END;
+-- /
+
+-- 1) 创建用户（USERS 表空间是 ASSM，可存放 VECTOR 列；不要用 SYSTEM）
+CREATE USER DEVUSER IDENTIFIED BY DevPassword123
+    DEFAULT TABLESPACE USERS
+    TEMPORARY TABLESPACE TEMP
+    QUOTA UNLIMITED ON USERS;
+
+-- 2) 基础 / 对象 / 管理授权
+GRANT CONNECT, RESOURCE, CREATE SESSION TO DEVUSER;
+GRANT UNLIMITED TABLESPACE TO DEVUSER;
+GRANT CREATE TABLE, CREATE VIEW, CREATE SEQUENCE, CREATE PROCEDURE,
+      CREATE TRIGGER, CREATE TYPE, CREATE SYNONYM, CREATE DATABASE LINK,
+      CREATE MATERIALIZED VIEW, CREATE JOB TO DEVUSER;
+GRANT SELECT ANY TABLE, INSERT ANY TABLE, UPDATE ANY TABLE, DELETE ANY TABLE,
+      EXECUTE ANY PROCEDURE, CREATE ANY TABLE, ALTER ANY TABLE, DROP ANY TABLE TO DEVUSER;
+GRANT QUERY REWRITE, GLOBAL QUERY REWRITE TO DEVUSER;
+GRANT DEBUG CONNECT SESSION TO DEVUSER;
+
+-- 3) 校验（期望: USERS，即 ASSM）
+SELECT DEFAULT_TABLESPACE FROM dba_users WHERE username='DEVUSER';
+
+EXIT;

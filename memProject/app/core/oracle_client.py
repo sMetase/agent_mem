@@ -2,7 +2,7 @@
 """
 Oracle 26ai AI Vector Search 客户端 — 向量 + 关键词检索统一在 t_memory「同表」完成。
 
-替代原 Oracle 26ai（dense 向量）+ Oracle 26ai sparse BM25 方案：
+替代原 Qdrant（dense 向量 + sparse BM25）方案：
 - 语义检索：t_memory.embedding 使用 Oracle VECTOR 类型，VECTOR_DISTANCE 计算余弦相似度
 - 关键词检索：jieba 分词 → INSTR(content) 多候选 + 命中数排序（不依赖 Oracle Text 词法分析器，中文友好）
 - 向量写入：以 memory_id 为唯一键，UPDATE t_memory.embedding（同表，无需桥接表）
@@ -185,20 +185,22 @@ class OracleVectorStore:
 
         params = {'u': user_id, 'k': int(top_k)}
         where = ['user_id = :u', "status = 'active'"]
+        # 关键词候选：任一 token 命中即可（OR），保证中文长查询的召回率；
+        # 相关度由下方命中词数（score_case）排序，命中越多越靠前。
+        token_clauses = [f'INSTR(content, :t{i}) > 0' for i in range(len(tokens))]
         for i, tok in enumerate(tokens):
-            where.append(f'INSTR(content, :t{i}) > 0')
             params[f't{i}'] = tok
         base_filters = _build_memory_filters(user_id, payload_filters, params)
         for clause in base_filters:
             if clause not in where:
                 where.append(clause)
 
-        # 命中词数作为相关系数（CASE 累加），同时保留 INSTR 过滤条件
+        # 命中词数作为相关系数（CASE 累加），按命中数降序
         score_case = ' + '.join(f"(CASE WHEN INSTR(content, :t{i}) > 0 THEN 1 ELSE 0 END)" for i in range(len(tokens)))
         sql = (
             f'SELECT memory_id, ({score_case}) AS matched '
             'FROM t_memory WHERE '
-            + ' AND '.join(where)
+            + ' AND '.join(where + ['(' + ' OR '.join(token_clauses) + ')'])
             + ' ORDER BY matched DESC FETCH FIRST :k ROWS ONLY'
         )
         try:

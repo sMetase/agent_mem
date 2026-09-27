@@ -7,6 +7,8 @@ Embedding Client — 直接调用 SiliconFlow OpenAI 兼容 Embedding API。
 """
 
 import asyncio
+import asyncio
+import json
 import os
 from typing import Optional
 

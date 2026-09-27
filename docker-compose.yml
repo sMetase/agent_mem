@@ -79,6 +79,8 @@ services:
       - "host.docker.internal:host-gateway"
     environment:
       TZ: ${TZ:-Asia/Shanghai}
+      # Oracle 地址由 .env 的 ORACLE_HOST 决定（本机部署填写本机 IP，如 211.87.232.203，而非 127.0.0.1）。
+      # 容器内访问宿主机若用 localhost 会指向容器自身，必须用可路由的本机/宿主机 IP。
       ORACLE_HOST: ${ORACLE_HOST:-host.docker.internal}
       ORACLE_PORT: ${ORACLE_PORT:-1521}
       ORACLE_USER: ${ORACLE_USER:-DEVUSER}
@@ -97,6 +99,9 @@ services:
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       AUTH_ENABLED: ${AUTH_ENABLED:-false}
       MCP_BASE_URL: ${MCP_BASE_URL:-http://openmemory:8765/mcp}
+      # MCP 工具（挂在本后端 /mcp）转调 REST API：同一进程，使用容器内自调地址。
+      # 不要用 .env 的 MEMPROJECT_API_URL（那指向宿主 8000，容器内不可达/端口错），否则 MCP 写入类工具会卡死。
+      MEMPROJECT_API_URL: ${BACKEND_REST_URL:-http://127.0.0.1:8000}
     ports:
       - "${BACKEND_PORT:-8000}:8000"
     depends_on:

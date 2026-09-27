@@ -99,27 +99,32 @@ async def generate_persona(db, user_id: str, scene_id: str) -> dict:
         USING (SELECT
                  :persona_id AS persona_id, :user_id AS user_id, :scene_id AS scene_id,
                  :content AS content, :last_persona_time AS last_persona_time,
-                 :last_seq_id AS last_seq_id
+                 :last_seq_id AS last_seq_id, :now AS now
                FROM dual) src
         ON (tgt.user_id = src.user_id AND tgt.scene_id = src.scene_id)
         WHEN MATCHED THEN
             UPDATE SET content = src.content,
                        last_persona_time = src.last_persona_time,
                        last_seq_id = src.last_seq_id,
-                       updated_at = SYSTIMESTAMP
+                       updated_at = src.now
         WHEN NOT MATCHED THEN
             INSERT (persona_id, user_id, scene_id, content, last_persona_time, last_seq_id, created_at, updated_at)
             VALUES (src.persona_id, src.user_id, src.scene_id, src.content,
-                    src.last_persona_time, src.last_seq_id, SYSTIMESTAMP, SYSTIMESTAMP)
+                    src.last_persona_time, src.last_seq_id, src.now, src.now)
         """
     )
+    # created_at / updated_at 绑定 Python 侧 now，保持与 last_persona_time 同为 UTC，
+    # 避免 SYSTIMESTAMP（DB 会话时区）与 UTC naive 列隐式转换造成时区不一致。
+    # Oracle TIMESTAMP 列无时区：裸 text SQL 绑定不走 TypeDecorator，需显式转成 UTC naive。
+    _now_utc_naive = now.replace(tzinfo=None) if now.tzinfo else now
     await db.execute(_MERGE_SQL, {
         "persona_id": _gen_persona_id(),
         "user_id": user_id,
         "scene_id": scene_id,
         "content": content,
-        "last_persona_time": now,
+        "last_persona_time": _now_utc_naive,
         "last_seq_id": last_seq_id,
+        "now": _now_utc_naive,
     })
     await db.commit()
 

@@ -8,12 +8,54 @@ import uuid
 from datetime import datetime, timezone
 
 from sqlalchemy import (
-    Column, String, Text, Integer, Float, Boolean, TypeDecorator,
-    DateTime, BigInteger, Index, UniqueConstraint, text,
+    Column, String, Text, Integer, Float, Boolean, TypeDecorator, DateTime as _Dt,
+    BigInteger, Index, UniqueConstraint, text,
 )
+# 注意：不要直接 import DateTime —— 下方用 OracleDateTime 覆盖同名，保证全表带微秒精度
 from sqlalchemy.orm import relationship
 
 from app.core.database import Base
+
+
+class OracleDateTime(TypeDecorator):
+    """Oracle 高精度时间列 — 映射为 TIMESTAMP(6)（微秒精度）。
+
+    解决 Oracle 迁移的一个真实问题：SQLAlchemy 把 DateTime(timezone=True) 映射成 Oracle DATE
+    （仅秒精度），微秒被截断，导致 L3 增量游标 `SceneBlock.updated_at > last_persona_time`
+    在同一秒内的连续更新被判定为「无变化」而漏重建画像。
+    用 TIMESTAMP(6) 保留微秒，与 Python 侧 timezone.utc 语义一致。
+    """
+    impl = _Dt  # 通用 DateTime 作为基线；load_dialect_impl 在 Oracle 下替换为 TIMESTAMP(6)
+
+    cache_ok = True
+
+    def load_dialect_impl(self, dialect):
+        from sqlalchemy.dialects.oracle import TIMESTAMP
+        return dialect.type_descriptor(TIMESTAMP(timezone=False))
+
+    def process_bind_param(self, value, dialect):
+        # oracle TIMESTAMP(timezone=False) 存的是无时区；统一转成 UTC naive（与读取时一致）
+        if value is None:
+            return None
+        if isinstance(value, datetime):
+            if value.tzinfo is not None:
+                return value.astimezone(timezone.utc).replace(tzinfo=None)
+            return value
+        return value
+
+    def process_result_value(self, value, dialect):
+        # 统一带 UTC 时区返回，与应用侧 timezone.utc 一致
+        if value is None:
+            return None
+        if isinstance(value, datetime):
+            if value.tzinfo is None:
+                return value.replace(tzinfo=timezone.utc)
+            return value.astimezone(timezone.utc)
+        return value
+
+
+# 覆盖本模块内的 DateTime 名称：所有 `Column(DateTime(...))` 自动使用微秒精度
+DateTime = OracleDateTime
 
 
 class OracleJson(TypeDecorator):
@@ -154,7 +196,7 @@ class Task(Base):
 class InteractionRecord(Base):
     __tablename__ = "t_interaction_record"
 
-    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    id = Column(BigInteger, primary_key=True, server_default=text("t_interaction_record_id_seq.nextval"))
     record_id = Column(String(64), unique=True, nullable=False, index=True)
     user_id = Column(String(128), nullable=False, index=True)
     agent_id = Column(String(128), nullable=True, index=True)
@@ -245,7 +287,7 @@ class MemoryHistory(Base):
     """记忆版本历史快照 — 每次 MERGE/UPDATE/替换 前保存旧版本内容。"""
     __tablename__ = "t_memory_history"
 
-    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    id = Column(BigInteger, primary_key=True, server_default=text("t_memory_history_id_seq.nextval"))
     memory_id = Column(String(64), nullable=False, index=True)
     version = Column(Integer, nullable=False)
     content = Column(Text, nullable=False)
@@ -269,7 +311,7 @@ class MemoryHistory(Base):
 class MemoryRelation(Base):
     __tablename__ = "t_memory_relation"
 
-    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    id = Column(BigInteger, primary_key=True, server_default=text("t_memory_relation_id_seq.nextval"))
     source_memory_id = Column(String(64), nullable=False, index=True)
     target_memory_id = Column(String(64), nullable=False, index=True)
     relation_type = Column(String(32), nullable=False)
@@ -289,7 +331,7 @@ class MemoryRelation(Base):
 class RetrievalRequest(Base):
     __tablename__ = "t_retrieval_request"
 
-    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    id = Column(BigInteger, primary_key=True, server_default=text("t_retrieval_request_id_seq.nextval"))
     request_id = Column(String(64), unique=True, nullable=False, index=True)
     agent_id = Column(String(128), nullable=True, index=True)
     user_id = Column(String(128), nullable=False, index=True)
@@ -310,7 +352,7 @@ class RetrievalRequest(Base):
 class RetrievalResult(Base):
     __tablename__ = "t_retrieval_result"
 
-    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    id = Column(BigInteger, primary_key=True, server_default=text("t_retrieval_result_id_seq.nextval"))
     request_id = Column(String(64), nullable=False, index=True)
     memory_id = Column(String(64), nullable=False, index=True)
     rank = Column(Integer)
@@ -331,7 +373,7 @@ class RetrievalResult(Base):
 class ApiLog(Base):
     __tablename__ = "t_api_log"
 
-    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    id = Column(BigInteger, primary_key=True, server_default=text("t_api_log_id_seq.nextval"))
     log_id = Column(String(64), unique=True, nullable=False, index=True)
     trace_id = Column(String(64), index=True)
     agent_id = Column(String(128), nullable=True, index=True)
@@ -356,7 +398,7 @@ class DedupAudit(Base):
     """去重融合操作审计记录"""
     __tablename__ = "t_dedup_audit"
 
-    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    id = Column(BigInteger, primary_key=True, server_default=text("t_dedup_audit_id_seq.nextval"))
     audit_id = Column(String(64), unique=True, nullable=False, index=True)
     # 新记忆信息
     candidate_content = Column(Text)

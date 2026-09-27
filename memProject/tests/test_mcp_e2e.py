@@ -13,7 +13,6 @@ import json
 import os
 from uuid import uuid4
 
-import httpx
 import pytest
 from fastmcp import Client
 
@@ -36,12 +35,12 @@ EXPECTED_TOOLS = {
 
 
 async def _backend_is_available() -> bool:
-    health_url = MCP_URL.removesuffix("/mcp/") + "/health"
+    """确认 MCP 端点本身可用（而非只探测 /health，避免被无关/旧后端误判）。"""
     try:
-        async with httpx.AsyncClient(timeout=3) as client:
-            response = await client.get(health_url)
-        return response.is_success
-    except httpx.HTTPError:
+        async with Client(MCP_URL) as probe:
+            tools = await probe.list_tools()
+            return {t.name for t in tools} >= {"create_session", "search_memories"}
+    except Exception:
         return False
 
 
@@ -105,7 +104,7 @@ async def test_mcp_memory_write_and_retrieval_e2e():
         historical_sessions = [
             (
                 "2026-09-01T10:00:00+08:00",
-                "用户确定后端数据库使用 PostgreSQL，向量检索使用 Qdrant。",
+                "用户确定后端数据库使用 Oracle，向量检索使用 Oracle 26ai 的 AI Vector Search。",
             ),
             (
                 "2026-09-05T15:30:00+08:00",
@@ -139,7 +138,7 @@ async def test_mcp_memory_write_and_retrieval_e2e():
         historical_search_data = await _wait_for_memory(
             client,
             "用户之前确定的数据库和向量检索方案是什么？",
-            expected_text="PostgreSQL",
+            expected_text="Oracle",
         )
         assert historical_search_data["results"]
 
