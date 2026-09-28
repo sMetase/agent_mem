@@ -1,5 +1,8 @@
 # 工作日志 — agent_mem 项目重建
 
+> **2026-09-28 注**：项目已迁移至 Oracle 26ai，不再使用 PostgreSQL / pgvector / Qdrant / OpenMemory。
+> 以下日志为迁移前的历史记录，仅作存档。
+
 **日期**: 2026-07-03
 **操作**: 按最新仓库教程完整重建
 

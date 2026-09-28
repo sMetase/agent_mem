@@ -13,7 +13,7 @@ ROOT="$(dirname "$SCRIPT_DIR")"
 PY="${PYTHON:-python3}"
 
 echo "====================================="
-echo " 迁移验证：PostgreSQL+Qdrant -> Oracle 26ai"
+echo " 部署验证：Oracle 26ai 初始化与健康检查"
 echo " 仓库根: $ROOT"
 echo "====================================="
 

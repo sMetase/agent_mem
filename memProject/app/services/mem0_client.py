@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-mem0 记忆框架封装 — history_store=PG 保持（可选），vector_store=Oracle 26ai(oracledb)。
+mem0 记忆框架封装 — vector_store=Oracle 26ai(oracledb)。
 若当前装的 mem0 版本不支持 oracledb 提供者，初始化会失败并走降级（非致命）。
 """
 
@@ -40,10 +40,6 @@ class Mem0Client:
                 "vector_store": {
                     "provider": settings.mem0.vector_store.get("provider", "oracledb"),
                     "config": vector_cfg,
-                },
-                "history_store": {
-                    "provider": settings.mem0.history_store.get("provider", "postgresql"),
-                    "config": settings.mem0.history_store.get("config", {}),
                 },
                 "llm": {
                     "provider": "openai",

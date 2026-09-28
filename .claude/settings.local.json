@@ -1,41 +1,11 @@
 {
   "permissions": {
     "allow": [
-      "WebSearch",
-      "Bash(where python3 *)",
-      "Bash(where python *)",
-      "Read(//c/Program Files/**)",
-      "Bash(D:\\\\software\\\\Anaconda3_2024.10_1\\\\python.exe *)",
-      "Bash(\"D:\\\\software\\\\Anaconda3_2024.10_1\\\\python.exe\" -c \"from docx import Document; doc = Document\\('面向大模型智能体的记忆系统功能设计文档.docx'\\); [print\\(p.text\\) for p in doc.paragraphs]\")",
-      "Bash(pip list *)",
-      "Bash(pip show *)",
-      "WebFetch(domain:github.com)",
-      "WebFetch(domain:raw.githubusercontent.com)",
-      "WebFetch(domain:docs.mem0.ai)",
-      "Bash(pip install *)",
-      "Bash(python3 -c ' *)",
-      "Bash(python -c ' *)",
-      "Bash(.venv/Scripts/python.exe -c ' *)",
-      "Bash(docker exec *)",
-      "Bash(.venv/Scripts/python.exe -c \"import qdrant_client; print\\(qdrant_client.__version__\\)\")",
-      "Bash(.venv/Scripts/pip.exe show *)",
-      "Bash(/d/anaconda/Anaconda3/python.exe *)",
-      "Bash(/D/homework/MemorySystem/agent_mem/memProject/.venv/Scripts/python.exe -m pytest /D/homework/MemorySystem/agent_mem/memProject/tests/test_role_a.py -v --tb=short)",
-      "Bash(/D/homework/MemorySystem/agent_mem/memProject/.venv/Scripts/python.exe *)",
-      "Bash(/D/homework/MemorySystem/agent_mem/memProject/.venv/Scripts/pip.exe install *)",
-      "Bash(.venv/Scripts/python.exe -m pytest tests/test_role_a.py -v --tb=short)",
-      "Bash(.venv/Scripts/python.exe -m pytest tests/ -v --tb=short --ignore=tests/test_mem0.py --ignore=tests/test_api.py --ignore=tests/test_step1_init.py --ignore=tests/test_step2_retrieval.py --ignore=tests/test_step3_api.py --ignore=tests/test_retrieval.py --ignore=tests/test_retrieval_verify.py --ignore=tests/test_final_demo.py --ignore=tests/test_mcp_4tools.py --ignore=tests/test_memory_generation.py --ignore=tests/check_retrieval_status.py --ignore=tests/clean_qdrant.py -k \"not mem0 and not api and not retrieval and not mcp\")",
-      "Bash(.venv/Scripts/python.exe -m pytest tests/test_interaction_types.py -v --tb=short)",
-      "Bash(.venv/Scripts/python.exe -m pytest tests/test_role_a.py tests/test_interaction_types.py -v --tb=short)",
-      "Bash(.venv/Scripts/python.exe -c \"from app.schemas.memory import MemoryDeleteResponse, MemoryUpdateResponse, AsyncWriteRequest, AsyncWriteResponse, ContextRequest, MemoryDeleteRequest, MemoryEvent, MemorySearchRequest, MemoryUpdateRequest, MemoryWriteRequest, MemoryWriteResponse, WriteResultItem; print\\('All imports OK'\\)\")",
-      "Bash(.venv/Scripts/python.exe -c \"from app.main import app; print\\('App loaded OK, ready to run'\\)\")",
-      "Bash(.venv/Scripts/python.exe -m pytest tests/test_interaction_types.py tests/test_role_a.py -q --tb=short)",
-      "Bash(curl *)",
-      "Bash(python3 -c \"import sys,json; d=json.loads\\(sys.stdin.readline\\(\\)\\); print\\(json.dumps\\({k: type\\(v\\).__name__ if k != 'conversation' else f'list[{len\\(v\\)}]' for k,v in d.items\\(\\)}, indent=2\\)\\); print\\('fields:', list\\(d.keys\\(\\)\\)\\); print\\('conv_fields:', list\\(d['conversation'][0].keys\\(\\)\\) if d['conversation'] else 'empty'\\)\")",
-      "Bash(.venv/Scripts/python.exe tests/test_with_dataset.py --count 3 --dry-run)",
-      "Bash(.venv/Scripts/python.exe tests/test_with_dataset.py --count 1 --type dialogue)",
-      "Bash(powershell.exe -Command \"Get-Process python | Stop-Process -Force\")",
-      "Bash(nohup .venv/Scripts/python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000)"
+      "Bash(python3 *)",
+      "Bash(docker compose *)",
+      "Bash(bash -n /home/lc/agent_mem/migration.sh)",
+      "Bash(bash -n /home/lc/agent_mem/migration/verify_migration.sh)",
+      "Bash(bash -n /home/lc/agent_mem/update_dockerfiles.sh)"
     ]
   }
 }

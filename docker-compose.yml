@@ -15,7 +15,7 @@
 #   后端       8000
 #   Kafka      9092
 #   Kafka UI   8080
-#   Oracle 26ai 在宿主机独立运行（127.0.0.1:1521, PDB=FREEPDB1, DEVUSER）
+#   Oracle 26ai 由外部已部署实例提供
 # ============================================================
 
 services:
@@ -98,9 +98,7 @@ services:
       JWT_SECRET_KEY: ${JWT_SECRET_KEY:-change-this-jwt-secret}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       AUTH_ENABLED: ${AUTH_ENABLED:-false}
-      MCP_BASE_URL: ${MCP_BASE_URL:-http://openmemory:8765/mcp}
-      # MCP 工具（挂在本后端 /mcp）转调 REST API：同一进程，使用容器内自调地址。
-      # 不要用 .env 的 MEMPROJECT_API_URL（那指向宿主 8000，容器内不可达/端口错），否则 MCP 写入类工具会卡死。
+      # 内置 MCP 工具调用本进程 REST API（容器内自调）
       MEMPROJECT_API_URL: ${BACKEND_REST_URL:-http://127.0.0.1:8000}
     ports:
       - "${BACKEND_PORT:-8000}:8000"

@@ -85,10 +85,10 @@ def _tokenize(text: str) -> list[str]:
 
 class OracleVectorStore:
     """
-    Oracle AI Vector Search 客户端单例 — 替代 Oracle 26ai 完成记忆去重/检索的向量能力。
+    Oracle AI Vector Search 客户端单例 — 基于 Oracle 26ai 完成记忆去重/检索的向量能力。
 
     面向 t_memory「同表」方案：search_similar / search_keyword / upsert_vectors /
-    delete_vectors 与旧 qdrant_client 接口保持一致，上层可直接替换。
+    delete_vectors 提供与上层 vector_store 兼容的接口。
     """
 
     def __init__(self) -> None:

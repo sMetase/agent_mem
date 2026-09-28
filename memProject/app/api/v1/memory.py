@@ -52,7 +52,6 @@ from app.schemas.memory import (
     MemoryUpdateResponse,
     MemoryWriteRequest,
 )
-from app.services.mem0_client import mem0_client
 from app.services.l0_store import (
     gen_record_ids,
     count_l0_records,
@@ -247,12 +246,12 @@ async def memory_search(
     agent_id: str = Depends(get_current_agent),
 ):
     """
-    语义检索历史记忆 — mem0 三路混合检索（语义 + BM25 + 实体）+ Oracle 26ai 层全字段过滤（已启用 v2）。
+    语义检索历史记忆 — Oracle 26ai 向量检索 + 关键词匹配 + 应用层元数据过滤。
 
-    mem0 在 Oracle 26ai 层完成所有过滤（user_id / scene_id / task_id / session_id /
-    memory_type / status / created_at 时间范围），无需 PG 后过滤。
+    过滤在数据库层完成（user_id / scene_id / task_id / session_id /
+    memory_type / status / created_at 时间范围）。
 
-    当 mem0 不可用时，降级为 memory_store 路径。
+    异常时降级为 memory_store 本地检索路径。
     """
     t0 = time_module.perf_counter()
 
@@ -311,7 +310,7 @@ async def memory_search(
         if not hits:
             return ok({"query": body.query, "results": [], "total_candidates": 0, "elapsed_ms": 0})
 
-        # memory_id → qdrant_score（vector_store 已返回 memory_id，无需桥接表）
+        # memory_id → vector_score（vector_store 已返回 memory_id，无需桥接表）
         id_map = {h["memory_id"]: h["score"] for h in hits}
 
         # Step 3: T_MEMORY 取权威数据 + 后过滤
@@ -728,7 +727,7 @@ async def memory_list(
     分页列出用户全部记忆。
 
     支持按 scene/task/session/agent/memory_type/memory_scope/time 过滤，
-    优先使用 MemoryStore 直查 Oracle 26ai；查询为空时降级到 MCP 路径。
+    使用 MemoryStore 直查 Oracle 26ai。
     """
     try:
         result = await memory_store.list_memories(
@@ -745,23 +744,11 @@ async def memory_list(
             page=page,
             page_size=page_size,
         )
-
-        if result["total"] > 0:
-            return ok(result)
-
-        logger.info(f"MemoryStore empty for user={user_id}, falling back to MCP")
-        from app.mcp_client import mcp_client
-        mcp_result = await mcp_client.list_memories(user_id=user_id)
-        return ok(mcp_result)
+        return ok(result)
 
     except Exception as e:
         logger.error(f"List failed: {e}")
-        from app.mcp_client import mcp_client
-        try:
-            mcp_result = await mcp_client.list_memories(user_id=user_id)
-            return ok(mcp_result)
-        except Exception:
-            return ok({"items": [], "total": 0, "page": page, "page_size": page_size})
+        return ok({"items": [], "total": 0, "page": page, "page_size": page_size})
 
 
 # ============================================================
@@ -776,21 +763,13 @@ async def memory_delete_all(
     _agent: str = Depends(get_current_agent),
 ):
     """
-    清除用户全部记忆 — Oracle 26ai + Oracle 26ai 双清。
-    同时清理 MCP/mem0 中的记忆（如果可用）。
+    清除用户全部记忆 — Oracle 26ai 关系表 + 向量索引双清。
     """
     store_result = await memory_store.delete_all_memories(
         user_id=user_id,
         db=db,
         scene_id=scene_id,
     )
-
-    try:
-        from app.mcp_client import mcp_client
-        await mcp_client.delete_all_memories(user_id=user_id)
-        logger.info(f"MCP memories also cleared for user={user_id}")
-    except Exception as e:
-        logger.warning(f"MCP delete-all failed (non-fatal): {e}")
 
     return ok({
         "message": store_result["message"],

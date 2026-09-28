@@ -2,8 +2,7 @@
 """
 LLM Client — 直接调用 DeepSeek OpenAI 兼容 API（chat/completions）。
 
-与 OpenMemory MCP Server 使用相同的 DeepSeek 配置，但提供自定义 prompt 的
-结构化 JSON 抽取能力，绕过 mem0 的黑盒 infer 流程。
+提供自定义 prompt 的结构化 JSON 抽取能力，绕过 mem0 的黑盒 infer 流程。
 """
 
 import json
@@ -23,7 +22,7 @@ from app.core.logger import get_logger
 
 logger = get_logger("llm_client")
 
-# DeepSeek 配置（优先从环境变量读取，与 OpenMemory MCP Server 一致）
+# DeepSeek 配置（优先从环境变量读取）
 DEEPSEEK_BASE_URL = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1")
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
 DEEPSEEK_MODEL = os.getenv("LLM_MODEL", "deepseek-chat")

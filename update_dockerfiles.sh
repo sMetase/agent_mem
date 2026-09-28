@@ -11,7 +11,7 @@ echo "开始更新 Dockerfile..."
 echo ""
 
 # 1. agent-memory-frontend/Dockerfile
-echo "更新 1/3: agent-memory-frontend/Dockerfile"
+echo "更新 1/2: agent-memory-frontend/Dockerfile"
 cat > "$REPO_ROOT/agent-memory-frontend/Dockerfile" << 'EOF'
 FROM node:24.20.0-alpine3.24 AS builder
 
@@ -26,9 +26,8 @@ ENV VITE_API_BASE_URL=$VITE_API_BASE_URL \
 WORKDIR /app
 
 COPY package.json pnpm-lock.yaml ./
-ARG NPM_REGISTRY=http://10.10.41.127:8081/repository/npm-public
-RUN npm install --global pnpm@11.7.0 --registry="$NPM_REGISTRY" && \
-    pnpm config set registry "$NPM_REGISTRY"
+RUN corepack enable && corepack prepare pnpm@11.7.0 --activate
+# RUN pnpm config set registry http://10.10.41.127:8081/repository/npm-public
 RUN pnpm install --frozen-lockfile
 
 COPY . .
@@ -46,23 +45,16 @@ EOF
 echo "✓ 完成"
 
 # 2. memProject/Dockerfile
-echo "更新 2/3: memProject/Dockerfile"
+echo "更新 2/2: memProject/Dockerfile"
 cat > "$REPO_ROOT/memProject/Dockerfile" << 'EOF'
 FROM python:3.12-slim
 
 WORKDIR /app
 
-# 系统依赖
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
-    libpq-dev \
-    curl \
-    && rm -rf /var/lib/apt/lists/*
-
 # Python 依赖
 COPY requirements.txt .
 
-RUN pip config set global.index-url http://10.10.41.127:8081/repository/pypi-group/simple && pip config set global.trusted-host 10.10.41.127
+# RUN pip config set global.index-url http://10.10.41.127:8081/repository/pypi-group/simple && pip config set global.trusted-host 10.10.41.127
 RUN pip install --no-cache-dir -r requirements.txt
 
 # 应用代码
@@ -74,28 +66,7 @@ USER appuser
 
 EXPOSE 8000 9090
 
-CMD ["sh", "-c", "python -m alembic upgrade head && exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 1"]
-EOF
-echo "✓ 完成"
-
-# 3. mem0_repo/openmemory/api/Dockerfile
-echo "更新 3/3: mem0_repo/openmemory/api/Dockerfile"
-cat > "$REPO_ROOT/mem0_repo/openmemory/api/Dockerfile" << 'EOF'
-FROM python:3.12-slim
-
-LABEL org.opencontainers.image.name="mem0/openmemory-mcp"
-
-WORKDIR /usr/src/openmemory
-
-COPY requirements.txt .
-RUN pip config set global.index-url http://10.10.41.127:8081/repository/pypi-group/simple && pip config set global.trusted-host 10.10.41.127
-RUN pip install -r requirements.txt
-
-COPY config.json .
-COPY . .
-
-EXPOSE 8765
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8765"]
+CMD ["sh", "-c", "python scripts/oracle_bootstrap.py && exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 1"]
 EOF
 echo "✓ 完成"
 
@@ -110,11 +81,7 @@ echo "=========================================="
 echo ""
 echo "变更摘要："
 echo "1. agent-memory-frontend/Dockerfile"
-echo "   - 添加 NPM_REGISTRY 参数"
-echo "   - 更新 pnpm 安装命令使用自定义 registry"
+echo "   - 使用 corepack + pnpm 11.7.0"
 echo ""
 echo "2. memProject/Dockerfile"
-echo "   - 取消注释 pip 源配置"
-echo ""
-echo "3. mem0_repo/openmemory/api/Dockerfile"
-echo "   - 取消注释 pip 源配置"
+echo "   - Oracle 26ai 幂等建表后启动 uvicorn"

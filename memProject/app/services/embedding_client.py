@@ -22,7 +22,7 @@ from app.core.logger import get_logger
 
 logger = get_logger("embedding_client")
 
-# SiliconFlow 配置（优先从环境变量读取，与 OpenMemory MCP Server 一致）
+# SiliconFlow 配置（优先从环境变量读取）
 SILICONFLOW_BASE_URL = os.getenv("SILICONFLOW_BASE_URL", "https://api.siliconflow.cn/v1")
 SILICONFLOW_API_KEY = os.getenv("SILICONFLOW_API_KEY", "")
 EMBEDDING_MODEL = os.getenv("EMBEDDER_MODEL", "BAAI/bge-m3")

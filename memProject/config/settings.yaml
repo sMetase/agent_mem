@@ -26,7 +26,7 @@ database:
   max_overflow: 5
   pool_recycle: 3600
 
-# mem0 配置（vector_store 使用 Oracle 26ai 的 oracledb 提供者，history_store 保留 PG 仅做兼容可选）
+# mem0 配置（vector_store 使用 Oracle 26ai 的 oracledb 提供者）
 mem0:
   vector_store:
     provider: "oracledb"
@@ -38,14 +38,6 @@ mem0:
         user: "${ORACLE_USER:-DEVUSER}"
         password: "${ORACLE_PASSWORD:-DevPassword123}"
         dsn: "${ORACLE_HOST:-localhost}:${ORACLE_PORT:-1521}/${ORACLE_SERVICE:-FREEPDB1}"
-  history_store:
-    provider: "postgresql"
-    config:
-      host: "${DB_HOST:-localhost}"
-      port: "${DB_PORT:-5432}"
-      user: "${DB_USER:-memuser}"
-      password: "${DB_PASSWORD:-mempassword}"
-      database: "${DB_NAME:-agent_memory}"
   llm:
     provider: "openai"
     config:

@@ -15,10 +15,10 @@
 ```
 智能体 / 前端
     │
-    ├── REST  → memProject FastAPI (:8000) ─┐
-    │                                       ├── OpenMemory MCP (:8765, 内部存储)
-    │                                       ├── Oracle 26ai（关系表 + AI Vector Search 同库）
-    └── MCP   → memProject MCP (:8000/mcp/) ─┴── 高级工具适配层
+    ├── REST  → memProject FastAPI (:8000)
+    └── MCP   → memProject MCP (:8000/mcp/)
+              ↓
+         Oracle 26ai（关系表 + AI Vector Search 同库）
 ```
 
 ## 从零开始
@@ -71,7 +71,10 @@ SILICONFLOW_API_KEY=sk-你的Key
 
 ### 第四步：启动基础设施
 
+返回仓库根目录启动 Redis + Kafka + Kafka UI（Oracle 26ai 由外部已部署实例提供）：
+
 ```bash
+cd ..
 docker compose up -d
 ```
 
@@ -79,14 +82,13 @@ docker compose up -d
 
 ```bash
 docker ps --filter "name=mem-"
-# 应看到 mem-postgres 和 mem-qdrant
+# 应看到 mem-redis、mem-kafka 和 mem-kafka-ui
 ```
 
-### 第五步：创建数据库表
+### 第五步：初始化 Oracle 26ai 表
 
 ```bash
-python -m alembic revision --autogenerate -m "init_schema"
-python -m alembic upgrade head
+python scripts/oracle_bootstrap.py
 ```
 
 ---
@@ -107,7 +109,7 @@ python -m uvicorn app.main:app --reload --port 8000
 ### 第七步：使用 backend 内置的 memProject MCP Server
 
 MCP Server 使用 Streamable HTTP，与 REST API 共用 backend 进程，默认地址为 `http://127.0.0.1:8000/mcp/`。
-它调用 memProject 的 REST API，复用 backend 连接的 OpenMemory MCP、PostgreSQL、Qdrant 和异步记忆流水线；OpenMemory 只作为内部存储，不作为外部 MCP 入口。
+它调用 memProject 的 REST API，复用 backend 连接的 Oracle 26ai 和异步记忆流水线。
 
 不需要单独启动 MCP 进程，启动 FastAPI backend 后即可使用。MCP 工具定义位于 `app/mcp_server.py`，由 `app/main.py` 挂载。
 
@@ -200,7 +202,6 @@ memProject/
 │   ├── schemas/                 # 请求/响应 Pydantic
 │   ├── services/mem0_client.py  # mem0 直连（已弃用，保留备用）
 │   ├── mcp_server.py            # memProject MCP Server（Streamable HTTP）
-│   ├── mcp_client.py            # 旧 OpenMemory 兼容客户端（内部备用）
 │   └── middleware/              # 日志、认证、异常处理
 ├── config/settings.yaml         # 全局配置
 ├── alembic/                     # 数据库迁移
@@ -232,8 +233,8 @@ netstat -ano | findstr 8765
 taskkill /F /PID <进程ID>
 ```
 
-**Q: add_memories 返回 "Memory system is currently unavailable"？**
-A: Qdrant 未启动或配置错误。确认 Docker 运行且 `docker ps` 能看到 Qdrant。
+**Q: 写入记忆后检索不到结果？**
+A: L1 抽取是异步流程，写入后需等待后台 worker 完成；也可检查 `.env` 中的 `ORACLE_HOST` 是否可达，并查看后端日志确认 `oracle_bootstrap.py` 建表成功。
 
 **Q: 延迟很高？**
 A: `add_memories` 调用了 DeepSeek API 做记忆抽取，耗时 5-10 秒是正常的。测试时可用 `"infer": false` 跳过大模型，直存原文。

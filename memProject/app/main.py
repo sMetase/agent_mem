@@ -123,8 +123,6 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         await mq_producer.stop()
     except Exception:
         pass
-    from app.mcp_client import mcp_client as mc
-    await mc.close_all()
     logger.info("Application shutting down")
 
 

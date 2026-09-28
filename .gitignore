@@ -40,3 +40,4 @@ continue_zh.jsonl
 *.tar.gz
 *.docx
 .vscode/
+.claude/

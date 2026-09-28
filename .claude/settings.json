@@ -1,7 +1,0 @@
-{
-  "permissions": {
-    "allow": [
-      "Bash(/c/Users/Lenovo/AppData/Local/Programs/Python/Python312/python.exe -m pip install asyncpg)"
-    ]
-  }
-}

@@ -1,24 +1,24 @@
 #!/usr/bin/env bash
 # ============================================================================
-# 智能体记忆系统 —— 数据迁移 + 重新构建 + 部署 一键脚本
+# 智能体记忆系统 —— 一键部署脚本
 #
-# 职责（仅这三项，不含任何换源/改 Dockerfile 逻辑）：
-#   1) 迁移数据：旧 PostgreSQL(pgvector) + Qdrant -> Oracle 26ai (AI Vector Search)
-#      （含幂等建表 + VECTOR 列 + 全文索引）
-#   2) 重新 build：docker compose build
-#   3) 部署：docker compose up -d + 健康检查
+# 职责：
+#   1) 幂等初始化 Oracle 26ai 表/向量索引（scripts/oracle_bootstrap.py）
+#   2) 重新 build 镜像（可选）
+#   3) 启动 docker compose
+#   4) 后端健康检查（可选）
 #
 # 用法（在仓库根目录）:
-#   bash migration.sh                        # 建表+迁移数据 + 重建镜像 + 部署 + 健康检查
-#   bash migration.sh --skip-build           # 不重建镜像（只迁移+部署）
-#   bash migration.sh --skip-migrate         # 跳过数据迁移（只重建+部署）
-#   bash migration.sh --skip-init-tables     # 跳过建表（只迁移数据）
+#   bash migration.sh                        # 建表 + 重建镜像 + 部署 + 健康检查
+#   bash migration.sh --skip-build           # 不重建镜像
+#   bash migration.sh --skip-init-tables     # 跳过建表
 #   bash migration.sh --no-verify            # 部署后不跑健康检查
+#   bash migration.sh --migrate              # 同时执行旧 PG/Qdrant → Oracle 数据迁移（升级场景）
 #   bash migration.sh --help
 #
 # 说明：
-#   - Oracle 26ai 在【宿主机】独立运行（.env 的 ORACLE_HOST 需填本机可路由 IP，如 211.87.232.203）。
-#   - backend 容器内通过该 IP 访问宿主机 Oracle。
+#   - Oracle 26ai 由外部已部署实例提供，.env 的 ORACLE_HOST 需填写可路由 IP。
+#   - 后端容器通过该 IP 直连 Oracle，不走 localhost。
 # ============================================================================
 set -uo pipefail
 
@@ -27,23 +27,23 @@ cd "$REPO_ROOT"
 
 # ---------------- 参数解析 ----------------
 DO_BUILD=1
-DO_MIGRATE=1
 DO_INIT_TABLES=1
 DO_VERIFY=1
+DO_MIGRATE=0
 PYTHON_BIN="${PYTHON:-python3}"
 
 usage() {
-  sed -n '3,20p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '3,22p' "$0" | sed 's/^# \{0,1\}//'
   exit 0
 }
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --skip-build)          DO_BUILD=0;;
-    --skip-migrate)        DO_MIGRATE=0;;
-    --skip-init-tables)    DO_INIT_TABLES=0;;
-    --no-verify)           DO_VERIFY=0;;
-    -h|--help)             usage;;
+    --skip-build)        DO_BUILD=0;;
+    --skip-init-tables) DO_INIT_TABLES=0;;
+    --no-verify)        DO_VERIFY=0;;
+    --migrate)          DO_MIGRATE=1;;
+    -h|--help)          usage;;
     *) echo "未知参数: $1"; usage;;
   esac
   shift
@@ -74,27 +74,28 @@ ORACLE_PASSWORD="${ORACLE_PASSWORD-$(get_env ORACLE_PASSWORD)}"; ORACLE_PASSWORD
 
 log "==> 检查 Oracle 可达: $ORACLE_HOST:$ORACLE_PORT/$ORACLE_SERVICE (user=$ORACLE_USER)"
 if ! timeout 5 bash -c "cat < /dev/null > /dev/tcp/$ORACLE_HOST/$ORACLE_PORT" 2>/dev/null; then
-  die "Oracle $ORACLE_HOST:$ORACLE_PORT 不可达。请确认 .env 的 ORACLE_HOST 填的是本机/宿主机可路由 IP（如 211.87.232.203），并确认宿主机 Oracle 已启动"
+  die "Oracle $ORACLE_HOST:$ORACLE_PORT 不可达。请确认 .env 的 ORACLE_HOST 填的是外部可路由 IP，并确认 Oracle 已启动"
 fi
 log "   ✓ Oracle 端口可达"
 
 export ORACLE_HOST ORACLE_PORT ORACLE_SERVICE ORACLE_USER ORACLE_PASSWORD
 
-# ---------------- 1) 建表 + 数据迁移 ----------------
+# ---------------- 1) 建表 ----------------
 if [[ "$DO_INIT_TABLES" == "1" ]]; then
   log "==> 幂等建表 + VECTOR 列 + 全文索引 (memProject/scripts/oracle_bootstrap.py)"
   ( cd memProject && PYTHONPATH="$PWD" "$PYTHON_BIN" scripts/oracle_bootstrap.py ) \
       && log "   建表完成" || die "建表失败，见上方错误"
 fi
 
+# ---------------- 1.5) 旧 PG/Qdrant → Oracle 数据迁移（升级场景，可选） ----------------
 if [[ "$DO_MIGRATE" == "1" ]]; then
-  log "==> 数据迁移：旧 PG(pgvector) + Qdrant -> Oracle（migration/migrate_data.py）"
+  log "==> 数据迁移：旧 PG(pgvector) + Qdrant → Oracle（migration/migrate_data.py）"
   if [[ -f migration/migrate_data.py ]]; then
     if "$PYTHON_BIN" -c "import psycopg2" 2>/dev/null; then
       PYTHONPATH="$REPO_ROOT/memProject" "$PYTHON_BIN" migration/migrate_data.py --verbose || \
           err "数据迁移返回非 0（旧库可能未运行/无数据/已迁移过；可忽略并手动迁移）"
     else
-      log "   跳过：未检测到 psycopg2（旧 PG 数据迁移依赖它），仅建表"
+      log "   跳过：未检测到 psycopg2（旧 PG 数据迁移依赖它），如需迁移请先 pip install psycopg2-binary"
     fi
   else
     log "   跳过：缺少 migration/migrate_data.py"

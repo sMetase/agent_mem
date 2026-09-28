@@ -6,8 +6,8 @@
 
 系统由三层组成：
 
-1. 基础设施层：PostgreSQL + pgvector、Qdrant、Redis、Kafka
-2. 后端服务层：FastAPI Backend，内置对外 memProject MCP Server，以及内部 OpenMemory MCP 依赖
+1. 基础设施层：Redis、Kafka（Oracle 26ai 由外部已部署实例提供）
+2. 后端服务层：FastAPI Backend，内置对外 memProject MCP Server
 3. 前端静态层：React/Vite 构建产物和 nginx
 
 ```text
@@ -17,7 +17,7 @@ Frontend nginx
   ↓
 Backend FastAPI + memProject MCP
   ↓
-PostgreSQL + Qdrant + Redis + Kafka
+Oracle 26ai + Redis + Kafka
 ```
 
 ## 2. 前置条件
@@ -48,10 +48,6 @@ SILICONFLOW_API_KEY=你的SiliconFlow_Key
 常用服务配置：
 
 ```env
-DB_HOST=postgres
-DB_PORT=5432
-QDRANT_HOST=qdrant
-QDRANT_PORT=6333
 REDIS_URL=redis://redis:6379/0
 KAFKA_BOOTSTRAP_SERVERS=kafka:9093
 BACKEND_PORT=8000
@@ -59,7 +55,7 @@ FRONTEND_PORT=8081
 KAFKA_UI_PORT=8080
 ```
 
-容器之间使用 Compose 服务名通信，例如 `postgres`、`qdrant`、`redis` 和 `kafka`；不要在容器内使用 `localhost` 访问这些服务。
+容器之间使用 Compose 服务名通信，例如 `redis` 和 `kafka`；Oracle 26ai 在容器外部，使用 `.env` 中的 `ORACLE_HOST` 访问，不要在容器内使用 `localhost` 指代 Oracle。
 
 ## 4. Docker Compose 部署
 
@@ -71,12 +67,9 @@ docker compose up -d --build
 
 Compose 会启动：
 
-- PostgreSQL + pgvector
-- Qdrant
 - Redis
 - Kafka
 - Kafka UI
-- OpenMemory MCP（Backend 内部）
 - Backend FastAPI 和对外 memProject MCP
 - Frontend nginx
 
@@ -113,8 +106,6 @@ curl http://localhost:8000/api/v1/health
 | memProject MCP | `http://localhost:8000/mcp/` |
 | Backend 健康检查 | `http://localhost:8000/health` |
 | Kafka UI | `http://localhost:8080` |
-| Qdrant | `http://localhost:6333` |
-| PostgreSQL | `localhost:5433` |
 
 如果 `.env` 修改了 `BACKEND_PORT` 或 `FRONTEND_PORT`，访问地址也要使用对应端口。
 
@@ -186,10 +177,9 @@ Windows 激活虚拟环境：
 .venv\Scripts\activate
 ```
 
-本地运行 Backend 时，`.env` 中的数据库地址应根据运行位置配置：
-
-- Backend 在宿主机运行：`DB_HOST=localhost`，PostgreSQL 使用映射端口 `5433`
-- Backend 在 Compose 容器运行：`DB_HOST=postgres`，数据库使用容器端口 `5432`
+本地运行 Backend 时，`.env` 中的 `ORACLE_HOST` 必须指向外部可路由的 Oracle 26ai 实例：
+不要填写 `localhost`，除非 Oracle 确实运行在本机且后端也是在同一台机器的本机网络栈上访问它。
+容器启动时会自动执行 Oracle 建表脚本 `python scripts/oracle_bootstrap.py`。
 
 ## 7. 前端本地开发和构建
 
@@ -263,16 +253,13 @@ server {
 
 | 服务 | 镜像或构建基础 | 作用 |
 | --- | --- | --- |
-| PostgreSQL | `pgvector/pgvector:pg16` | 主数据库和 pgvector |
-| Qdrant | `qdrant/qdrant:latest` | 向量检索 |
 | Redis | `redis:7-alpine` | 缓存和结果轮询 |
 | Kafka | `apache/kafka:3.7.2` | 异步消息队列 |
 | Kafka UI | `provectuslabs/kafka-ui:latest` | Kafka 管理界面 |
-| Backend | `python:3.12-slim` | FastAPI、MCP、L1/L2/L3 Worker |
-| OpenMemory | `python:3.12-slim` | Backend 内部记忆存储 MCP |
+| Backend | `python:3.12-slim` | FastAPI、MCP、L1/L2/L3 Worker，连接外部 Oracle 26ai |
 | Frontend | `node:24.20.0-alpine3.24` + `nginx:1.27-alpine` | 构建并托管前端 |
 
-Qdrant 和 Kafka UI 使用 `latest`，镜像内容可能随时间变化；Python 依赖版本见 `memProject/requirements.txt`。
+Kafka UI 使用 `latest`，镜像内容可能随时间变化；Python 依赖版本见 `memProject/requirements.txt`。
 
 ## 10. 主要 Python 依赖
 
@@ -280,10 +267,7 @@ Qdrant 和 Kafka UI 使用 `latest`，镜像内容可能随时间变化；Python
 | --- | --- | --- |
 | FastAPI | `0.138.2` | Web API 框架 |
 | SQLAlchemy | `2.0.51` | ORM 和数据访问层 |
-| asyncpg | `0.31.0` | PostgreSQL 异步驱动 |
-| psycopg2-binary | `2.9.12` | PostgreSQL 同步驱动 |
 | aiokafka | `0.14.0` | Kafka 异步客户端 |
-| qdrant-client | `1.18.0` | Qdrant 客户端 |
 | redis | `5.0.1` | Redis 客户端 |
 | openai | `2.44.0` | OpenAI 兼容模型接口 |
 | mem0ai | `2.0.10` | Mem0 记忆框架 |

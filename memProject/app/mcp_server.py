@@ -1,7 +1,7 @@
 """memProject MCP Server.
 
-The MCP surface is an adapter over the memProject REST API. OpenMemory remains
-an internal backend storage dependency and is not exposed by this process.
+The MCP surface is an adapter over the memProject REST API and its configured
+storage pipeline. It is not tied to any external MCP storage endpoint.
 """
 
 import asyncio
@@ -21,8 +21,7 @@ mcp = FastMCP(
     instructions=(
         "Use write_conversation to store conversation turns, search_memories "
         "to retrieve memories, and get_memory_context to assemble context for a reply. "
-        "This server uses the memProject API and its configured storage pipeline. "
-        "OpenMemory is internal and is not exposed as a public MCP endpoint."
+        "This server uses the memProject API and its configured Oracle 26ai storage pipeline."
     ),
 )
 

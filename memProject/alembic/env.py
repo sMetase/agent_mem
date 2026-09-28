@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Alembic 环境配置 — PostgreSQL 同步迁移。"""
+"""Alembic 环境配置（已弃用）。"""
 
 from logging.config import fileConfig
 from alembic import context

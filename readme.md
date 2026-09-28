@@ -13,8 +13,7 @@
     │                 └── L3 用户画像
     └── MCP       -> Backend /mcp/
 
-Backend -> PostgreSQL + Qdrant + Redis + Kafka
-Backend -> OpenMemory MCP（内部存储依赖）
+Backend -> Oracle 26ai + Redis + Kafka
 ```
 
 ## 快速开始
