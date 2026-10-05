@@ -27,7 +27,7 @@ WORKDIR /app
 
 COPY package.json pnpm-lock.yaml ./
 RUN corepack enable && corepack prepare pnpm@11.7.0 --activate
-# RUN pnpm config set registry http://10.10.41.127:8081/repository/npm-public
+RUN pnpm config set registry http://10.10.41.127:8081/repository/npm-public
 RUN pnpm install --frozen-lockfile
 
 COPY . .
@@ -54,7 +54,7 @@ WORKDIR /app
 # Python 依赖
 COPY requirements.txt .
 
-# RUN pip config set global.index-url http://10.10.41.127:8081/repository/pypi-group/simple && pip config set global.trusted-host 10.10.41.127
+RUN pip config set global.index-url http://10.10.41.127:8081/repository/pypi-group/simple && pip config set global.trusted-host 10.10.41.127
 RUN pip install --no-cache-dir -r requirements.txt
 
 # 应用代码
