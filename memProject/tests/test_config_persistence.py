@@ -43,3 +43,13 @@ def test_persist_generation_schedule_rejects_unknown_fields(tmp_path: Path):
 
     with pytest.raises(ValueError, match="不允许持久化配置字段"):
         persist_generation_schedule({"debug": True}, config_path=str(config_path))
+
+
+def test_mem0_api_base_urls_follow_environment(monkeypatch: pytest.MonkeyPatch):
+        monkeypatch.setenv("DEEPSEEK_BASE_URL", "https://llm.example/v1")
+        monkeypatch.setenv("SILICONFLOW_BASE_URL", "https://embedding.example/v1")
+
+        settings = load_settings()
+
+        assert settings.mem0.llm["config"]["openai_base_url"] == "https://llm.example/v1"
+        assert settings.mem0.embedder["config"]["openai_base_url"] == "https://embedding.example/v1"

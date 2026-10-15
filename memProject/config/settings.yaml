@@ -43,13 +43,13 @@ mem0:
     config:
       model: "${LLM_MODEL:-deepseek-chat}"
       api_key: "${DEEPSEEK_API_KEY}"
-      openai_base_url: "https://api.deepseek.com/v1"
+      openai_base_url: "${DEEPSEEK_BASE_URL:-https://api.deepseek.com/v1}"
   embedder:
     provider: "openai"
     config:
       model: "BAAI/bge-m3"
       api_key: "${SILICONFLOW_API_KEY}"
-      openai_base_url: "https://api.siliconflow.cn/v1"
+      openai_base_url: "${SILICONFLOW_BASE_URL:-https://api.siliconflow.cn/v1}"
 
 # Kafka 消息队列配置
 kafka:
