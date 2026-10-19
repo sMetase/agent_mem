@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_agent, get_current_user_id
+from app.api.deps import get_current_agent, get_current_user_id, get_required_user_id
 from app.core.database import get_db
 from app.core.exceptions import NotFoundError, ConflictError
 from app.core.logger import get_logger
@@ -23,8 +23,11 @@ router = APIRouter()
 
 
 def _assert_scene_access(scene: Scene, user_id: str) -> None:
-    """场景归属校验：生产模式（user_id 非空）下，无主（scene.user_id=None）或越权场景拒绝访问；开发模式（user_id 空）跳过。"""
-    if user_id and scene.user_id != user_id:
+    """
+    场景归属校验：场景有主时必须归属 user_id；无主场景（历史数据）允许访问（无法归属校验）。
+    注意：user_id 来自 get_required_user_id，永远非空，校验不会被空串跳过。
+    """
+    if scene.user_id and scene.user_id != user_id:
         raise NotFoundError(f"场景不存在: {scene.scene_id}")
 
 
@@ -32,26 +35,30 @@ def _assert_scene_access(scene: Scene, user_id: str) -> None:
 async def scene_create(
     body: SceneCreateRequest,
     db: AsyncSession = Depends(get_db),
-    user_id: str = Depends(get_current_user_id),
+    user_id: str = Depends(get_required_user_id),
 ):
-    """创建新场景，绑定 X-User-Id（场景私有隔离）。"""
+    """
+    创建新场景，绑定注册者 user_id（场景私有隔离）。
+
+    修复：改用 get_required_user_id，开发模式无 X-User-Id 时归属默认测试用户，
+    不再产生「无主场景」（无主场景会导致智能体/场景在控制台查不到）。
+    """
     # 同名校验：同一用户下不能创建同名场景（已停用的不算）
-    if user_id:
-        dup = await db.execute(
-            select(Scene).where(
-                Scene.user_id == user_id,
-                Scene.scene_name == body.scene_name,
-                Scene.is_active == True,
-            )
+    dup = await db.execute(
+        select(Scene).where(
+            Scene.user_id == user_id,
+            Scene.scene_name == body.scene_name,
+            Scene.is_active == True,
         )
-        if dup.scalar_one_or_none():
-            raise ConflictError(f"已存在同名场景: {body.scene_name}")
+    )
+    if dup.scalar_one_or_none():
+        raise ConflictError(f"已存在同名场景: {body.scene_name}")
 
     scene_id = generate_scene_id()
 
     scene = Scene(
         scene_id=scene_id,
-        user_id=user_id or None,
+        user_id=user_id,
         scene_name=body.scene_name,
         description=body.description,
         is_active=True,
@@ -78,7 +85,7 @@ async def scene_get(
     scene_id: str,
     db: AsyncSession = Depends(get_db),
     _current: str = Depends(get_current_agent),
-    user_id: str = Depends(get_current_user_id),
+    user_id: str = Depends(get_required_user_id),
 ):
     """查询单个场景信息"""
     result = await db.execute(
@@ -149,7 +156,7 @@ async def scene_update(
     body: SceneUpdateRequest,
     db: AsyncSession = Depends(get_db),
     _current: str = Depends(get_current_agent),
-    user_id: str = Depends(get_current_user_id),
+    user_id: str = Depends(get_required_user_id),
 ):
     """更新场景信息"""
     result = await db.execute(
@@ -180,7 +187,7 @@ async def scene_disable(
     scene_id: str,
     db: AsyncSession = Depends(get_db),
     _current: str = Depends(get_current_agent),
-    user_id: str = Depends(get_current_user_id),
+    user_id: str = Depends(get_required_user_id),
 ):
     """停用场景（软删除）"""
     result = await db.execute(

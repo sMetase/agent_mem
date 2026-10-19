@@ -27,6 +27,8 @@ settings = get_settings()
 # 开发阶段默认测试 Agent ID
 DEFAULT_DEV_AGENT_ID = "agent_dev_default"
 DEFAULT_DEV_SCENE_ID = "scene_dev_default"
+# 开发阶段默认测试用户 ID — 无 X-User-Id 时归属校验回退到该用户，避免空串静默跳过校验
+DEFAULT_DEV_USER_ID = "user_dev_default"
 
 
 async def get_current_agent(
@@ -132,11 +134,32 @@ async def get_current_user_id(request: Request) -> str:
             raise AuthenticationError("X-User-Id 长度超过限制 (128)")
         return user_id
 
-    # 开发期兼容：如果没有 Header，返回 None，由路由层从 body 中获取
+    # 开发期兼容：如果没有 Header，返回空字符串，由路由层从 body 中获取或按需处理
     if not settings.auth.enabled:
         logger.debug("[DEV模式] X-User-Id 未在 Header 中提供，将从请求体获取")
         return ""  # 空字符串表示"待从 body 获取"
 
+    raise AuthenticationError("缺少 X-User-Id 请求头 — 请提供用户唯一标识")
+
+
+async def get_required_user_id(request: Request) -> str:
+    """
+    获取确定的用户 ID（写/管理类接口专用）—— 永远返回非空 user_id。
+
+    修复：开发模式下无 X-User-Id 时若返回空串，端点里 `if user_id and ...` 会把归属校验
+    整个跳过，导致任何调用者都可在任意场景下注册智能体/创建场景（"智能体挂不到我名下"的根因）。
+    这里改为回退到默认测试用户 DEFAULT_DEV_USER_ID，让校验始终生效且结果可预期；
+    生产模式仍强制要求 X-User-Id。
+    """
+    user_id = request.headers.get("X-User-Id")
+    if user_id:
+        user_id = user_id.strip().lower()
+        if len(user_id) > 128:
+            raise AuthenticationError("X-User-Id 长度超过限制 (128)")
+        return user_id
+    if not settings.auth.enabled:
+        logger.debug(f"[DEV模式] X-User-Id 未提供，归属回退到默认测试用户 {DEFAULT_DEV_USER_ID}")
+        return DEFAULT_DEV_USER_ID
     raise AuthenticationError("缺少 X-User-Id 请求头 — 请提供用户唯一标识")
 
 

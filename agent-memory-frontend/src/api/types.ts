@@ -196,6 +196,8 @@ export interface AgentRegisterResult {
   agent_id: string
   api_key: string
   api_key_prefix: string
+  scene_id?: string
+  user_id?: string
 }
 
 export type AgentRotateKeyResult = AgentRegisterResult
@@ -204,6 +206,7 @@ export interface AgentInfo {
   agent_id: string
   agent_name?: string
   scene_id?: string
+  user_id?: string
   api_key_prefix?: string
   is_active?: boolean
   permissions?: string[]

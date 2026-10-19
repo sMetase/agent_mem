@@ -34,6 +34,25 @@ Backend -> Oracle 26ai + Redis + Kafka
 
 API 前缀为 `/api/v1`。开发环境 `AUTH_ENABLED=false` 时，可以使用 `X-Agent-Id` 指定智能体；生产环境需要使用 `X-API-Key` 鉴权。
 
+### 智能体注册与归属
+
+`POST /api/v1/agent/register` 通过 Header `X-User-Id` 识别注册者，智能体创建后**归属该 user_id**。控制台「智能体管理」页按登录用户的 `user_id` 过滤展示，因此用 API 注册的智能体，只要注册时携带与登录用户一致的 `X-User-Id`，就能在管理页查到（历史数据 `user_id` 为空的智能体会回退按场景归属可见）。
+
+```bash
+curl -X POST http://localhost:8000/api/v1/agent/register \
+  -H "Content-Type: application/json" \
+  -H "X-User-Id: user_001" \
+  -d '{
+    "agent_name": "客服助手",
+    "scene_id": "customer_service"
+  }'
+```
+
+- 生产模式（`AUTH_ENABLED=true`）：`X-User-Id` 必填，缺失返回 401。
+- 开发模式（`AUTH_ENABLED=false`）：缺失时回退默认测试用户 `user_dev_default`，归属校验始终生效。
+- 只能在**自己名下或未绑定归属**的场景下注册，在他人场景下注册返回 403。
+- 场景（`/api/v1/scene`）同样绑定创建者 `user_id`，仅归属者可查询/修改。
+
 ### 写入对话历史
 
 ```bash

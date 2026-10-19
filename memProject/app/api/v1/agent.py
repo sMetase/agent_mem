@@ -9,11 +9,11 @@
 """
 
 from fastapi import APIRouter, Depends, Query, Request
-from sqlalchemy import select, func
+from sqlalchemy import select, func, or_, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.api.deps import get_current_agent, get_current_user_id
+from app.api.deps import get_current_agent, get_current_user_id, get_required_user_id
 from app.core.database import get_db
 from app.core.exceptions import NotFoundError, ConflictError, AuthenticationError, AuthorizationError
 from app.core.logger import get_logger
@@ -37,7 +37,7 @@ router = APIRouter()
 async def agent_register(
     body: AgentRegisterRequest,
     db: AsyncSession = Depends(get_db),
-    user_id: str = Depends(get_current_user_id),
+    user_id: str = Depends(get_required_user_id),
 ):
     """
     注册新智能体。
@@ -45,12 +45,16 @@ async def agent_register(
     1. 生成 agent_id 和 api_key
     2. 数据库中只存储 api_key_hash (SHA256)
     3. 返回一次性的 api_key 明文（仅此一次，请妥善保存）
+
+    归属规则：智能体挂到「注册者 user_id + scene_id」名下（Agent.user_id）。
+    场景必须有主且归属注册者；无主场景（历史数据）允许注册，智能体仍绑定注册者，
+    从而保证控制台按 user_id 能查到。开发模式无 X-User-Id 时回退默认测试用户。
     """
     agent_id = generate_agent_id()
     api_key = generate_api_key()
     api_key_hash = hash_api_key(api_key)
 
-    # 校验 scene_id 是否存在 + 归属当前用户（场景私有）
+    # 校验 scene_id 是否存在 + 归属当前用户（场景私有；无主场景兼容历史数据）
     from app.models.base import Scene
     scene = (
         await db.execute(
@@ -59,7 +63,7 @@ async def agent_register(
     ).scalar_one_or_none()
     if not scene:
         raise NotFoundError(f"场景不存在或已停用: {body.scene_id}")
-    if user_id and scene.user_id != user_id:
+    if scene.user_id is not None and scene.user_id != user_id:
         raise AuthorizationError(f"无权在该场景下注册智能体: {body.scene_id}")
 
     # 同名校验：同一场景下不能注册同名智能体（已停用的不算）
@@ -84,6 +88,7 @@ async def agent_register(
         agent_id=agent_id,
         agent_name=body.agent_name,
         scene_id=body.scene_id,
+        user_id=user_id,  # 智能体归属注册者，控制台按 user_id 过滤可查
         api_key_hash=api_key_hash,
         api_key_prefix="mem_" + api_key[4:8] + "****",
         is_active=True,
@@ -96,7 +101,7 @@ async def agent_register(
     await db.commit()
     await db.refresh(agent)
 
-    logger.info(f"智能体注册成功: agent_id={agent_id}, agent_name={body.agent_name}")
+    logger.info(f"智能体注册成功: agent_id={agent_id}, agent_name={body.agent_name}, user_id={user_id}")
 
     return ok({
         "agent_id": agent_id,
@@ -104,6 +109,7 @@ async def agent_register(
         "api_key": api_key,  # ← 仅此一次返回明文
         "api_key_prefix": agent.api_key_prefix,
         "scene_id": body.scene_id,
+        "user_id": user_id,
         "is_active": True,
         "created_at": agent.created_at.isoformat(),
     }, "注册成功 — API Key 仅显示一次，请妥善保存")
@@ -127,6 +133,7 @@ async def agent_get(
         "agent_id": agent.agent_id,
         "agent_name": agent.agent_name,
         "scene_id": agent.scene_id,
+        "user_id": agent.user_id,
         "api_key_prefix": agent.api_key_prefix,
         "is_active": agent.is_active,
         "permissions": agent.permissions,
@@ -145,12 +152,21 @@ async def agent_list(
     db: AsyncSession = Depends(get_db),
     user_id: str = Depends(get_current_user_id),
 ):
-    """分页查询智能体列表（user 从 X-User-Id header 派生，通过 scene 关联过滤，无需 X-API-Key）"""
+    """
+    分页查询智能体列表（user 从 X-User-Id header 派生，无需 X-API-Key）。
+
+    归属过滤（修复：注册时已将 Agent.user_id 落库，直接按 Agent.user_id 过滤）：
+      - 新数据：Agent.user_id == 当前用户
+      - 旧数据兜底：Agent.user_id 为空（迁移前注册）时，回退按场景归属 Scene.user_id == 当前用户
+    """
     query = select(Agent)
 
     if user_id:
-        query = query.join(Scene, Agent.scene_id == Scene.scene_id).where(
-            Scene.user_id == user_id
+        query = query.outerjoin(Scene, Agent.scene_id == Scene.scene_id).where(
+            or_(
+                Agent.user_id == user_id,
+                and_(Agent.user_id.is_(None), Scene.user_id == user_id),
+            )
         )
     if scene_id:
         query = query.where(Agent.scene_id == scene_id)
@@ -172,6 +188,7 @@ async def agent_list(
             "agent_id": a.agent_id,
             "agent_name": a.agent_name,
             "scene_id": a.scene_id,
+            "user_id": a.user_id,
             "api_key_prefix": a.api_key_prefix,
             "is_active": a.is_active,
             "permissions": a.permissions,

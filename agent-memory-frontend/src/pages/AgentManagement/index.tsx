@@ -121,6 +121,7 @@ export default function AgentManagementPage() {
   const columns: TableColumnsType<AgentInfo> = [
     { title: '智能体名称', dataIndex: 'agent_name', width: 180, ellipsis: true, render: (value?: string, record?: AgentInfo) => <Text>{value || record?.agent_id || '-'}</Text> },
     { title: '所属场景', dataIndex: 'scene_id', width: 150, ellipsis: true, render: (value?: string) => value ? <Tag color="cyan">{value}</Tag> : '-' },
+    { title: '归属用户', dataIndex: 'user_id', width: 150, ellipsis: true, render: (value?: string) => value ? <Tag color="geekblue">{value}</Tag> : <Text type="secondary">-</Text> },
     {
       title: '状态',
       dataIndex: 'is_active',

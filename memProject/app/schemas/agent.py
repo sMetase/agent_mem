@@ -24,6 +24,8 @@ class AgentRegisterResponse(BaseModel):
     agent_name: str
     api_key: str = Field(..., description="API Key 明文，仅此次返回，请妥善保存")
     api_key_prefix: str = Field(..., description="API Key 前缀，用于展示")
+    scene_id: str = Field(..., description="所属场景标识")
+    user_id: str = Field(..., description="智能体归属用户 ID（注册者）")
     created_at: datetime
 
 
@@ -42,6 +44,7 @@ class AgentInfo(BaseModel):
     agent_id: str
     agent_name: str
     scene_id: Optional[str] = None
+    user_id: Optional[str] = Field(None, description="智能体归属用户 ID")
     api_key_prefix: Optional[str] = None
     is_active: bool = True
     permissions: list[str] = Field(default_factory=list)

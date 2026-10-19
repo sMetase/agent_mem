@@ -78,8 +78,16 @@
 ```
 POST /api/v1/agent/register
 Content-Type: application/json
-无需认证（开发阶段）
+Header: X-User-Id: <用户唯一标识>
 ```
+
+**身份与归属（重要）**
+
+- 注册接口通过 Header `X-User-Id` 识别注册者身份，智能体创建后**归属该 user_id**（`t_agent.user_id`），控制台「智能体管理」页按当前登录用户的 user_id 过滤即可查到。
+- 生产模式（`AUTH_ENABLED=true`）：`X-User-Id` 必填，缺失返回 401。
+- 开发模式（`AUTH_ENABLED=false`）：缺失时回退到默认测试用户 `user_dev_default`（归属校验始终生效，不会静默跳过）。
+- 归属校验：只能在**自己名下或未绑定归属（历史数据）**的场景下注册；在他人场景下注册返回 403。
+- `X-User-Id` 自动转小写并去空格，长度上限 128 字符。
 
 **入参**
 
@@ -91,7 +99,11 @@ Content-Type: application/json
 
 **请求示例**
 
-```json
+```
+POST /api/v1/agent/register
+X-User-Id: user_9527
+Content-Type: application/json
+
 {
   "agent_name": "客服助手",
   "scene_id": "customer_service",
@@ -105,6 +117,7 @@ Content-Type: application/json
 |------|------|------|
 | `agent_id` | string | 系统自动生成的智能体唯一标识，格式 `agent_xxx` |
 | `agent_name` | string | 注册时传入的智能体名称 |
+| `user_id` | string | 归属用户（注册者），与请求头 `X-User-Id` 一致 |
 | `api_key` | string | **仅此一次返回明文**，后续所有请求需携带此凭证 |
 | `api_key_prefix` | string | 部分遮罩的展示用前缀，如 `mem_bb63****` |
 | `scene_id` | string | 注册时传入的场景标识 |
@@ -120,6 +133,7 @@ Content-Type: application/json
   "data": {
     "agent_id": "agent_a1b2c3d4e5f6",
     "agent_name": "客服助手",
+    "user_id": "user_9527",
     "api_key": "mem_bb63ae9b8e65dbfe8f1a2b3c4d5e6f7a8",
     "api_key_prefix": "mem_bb63****",
     "scene_id": "customer_service",
@@ -136,6 +150,7 @@ Content-Type: application/json
 - `agent_id` 系统自动生成，冲突概率极低（UUID 派生）
 - `agent_name` 无唯一性约束，不同智能体可同名
 - 丢失 api_key 时需调用 `/agent/{agent_id}/rotate-key` 换新 key
+- 在他人场景（`scene.user_id != X-User-Id`）下注册返回 403
 
 ---
 
@@ -170,6 +185,7 @@ GET /api/v1/agent/agent_a1b2c3d4e5f6
 | `agent_id` | string | 智能体唯一标识 |
 | `agent_name` | string | 智能体名称 |
 | `scene_id` | string | 所属场景标识 |
+| `user_id` | string | 归属用户（注册者），历史数据可能为空 |
 | `api_key_prefix` | string | 部分遮罩的展示用前缀 |
 | `is_active` | bool | 是否启用 |
 | `permissions` | string[] | 权限列表 |
@@ -185,6 +201,7 @@ GET /api/v1/agent/agent_a1b2c3d4e5f6
     "agent_id": "agent_a1b2c3d4e5f6",
     "agent_name": "客服助手",
     "scene_id": "customer_service",
+    "user_id": "user_9527",
     "api_key_prefix": "mem_bb63****",
     "is_active": true,
     "permissions": ["read", "write"],
@@ -212,9 +229,15 @@ GET /api/v1/agent/agent_a1b2c3d4e5f6
 
 ```
 GET /api/v1/agent?scene_id=xxx&is_active=true&page=1&page_size=20
+Header: X-User-Id: <用户唯一标识>
 ```
 
-**入参**
+**入参与身份**
+
+- 列表按当前调用者的 `X-User-Id` 过滤（控制台管理页登录后即以此查询），仅返回**归属当前用户**的智能体：
+  - 新数据：`t_agent.user_id == X-User-Id`
+  - 历史数据（`t_agent.user_id` 为空）：回退按场景归属 `t_scene.user_id == X-User-Id` 兜底可见
+- 生产模式（`AUTH_ENABLED=true`）：`X-User-Id` 必填，缺失返回 401；开发模式缺失时按 `user_dev_default` 过滤。
 
 | 参数 | 类型 | 位置 | 必填 | 默认值 | 说明 |
 |------|------|------|:---:|--------|------|
@@ -227,6 +250,7 @@ GET /api/v1/agent?scene_id=xxx&is_active=true&page=1&page_size=20
 
 ```
 GET /api/v1/agent?scene_id=customer_service&is_active=true&page=1&page_size=10
+X-User-Id: user_9527
 ```
 
 **响应**
@@ -237,6 +261,7 @@ GET /api/v1/agent?scene_id=customer_service&is_active=true&page=1&page_size=10
 | `items[].agent_id` | string | 智能体唯一标识 |
 | `items[].agent_name` | string | 智能体名称 |
 | `items[].scene_id` | string | 所属场景 |
+| `items[].user_id` | string | 归属用户，历史数据可能为空 |
 | `items[].api_key_prefix` | string | 展示用 key 前缀 |
 | `items[].is_active` | bool | 启用状态 |
 | `items[].permissions` | string[] | 权限列表 |
@@ -257,6 +282,7 @@ GET /api/v1/agent?scene_id=customer_service&is_active=true&page=1&page_size=10
         "agent_id": "agent_a1b2c3d4e5f6",
         "agent_name": "客服助手",
         "scene_id": "customer_service",
+        "user_id": "user_9527",
         "api_key_prefix": "mem_bb63****",
         "is_active": true,
         "permissions": ["read", "write"],
@@ -273,7 +299,7 @@ GET /api/v1/agent?scene_id=customer_service&is_active=true&page=1&page_size=10
 
 **边界**
 
-- 不传过滤条件时返回全部智能体
+- 不传过滤条件时返回归属当前用户的全部智能体（跨租户数据不可见）
 - `page_size` 超过 100 或小于 1 时返回 422
 - 空列表返回 `{"items":[],"total":0}`，不报错
 
@@ -996,7 +1022,14 @@ POST /api/v1/session/{session_id}/close
 ```
 POST /api/v1/scene
 Content-Type: application/json
+Header: X-User-Id: <用户唯一标识>
 ```
+
+**身份与归属（重要）**
+
+- 场景创建后**归属调用者的 user_id**（`t_scene.user_id`）。查询/更新/停用均校验归属，无权操作他人场景返回 404（信息隐藏）或 403。
+- 生产模式（`AUTH_ENABLED=true`）：`X-User-Id` 必填，缺失返回 401；开发模式缺失时回退默认测试用户 `user_dev_default`。
+- `X-User-Id` 自动转小写并去空格，长度上限 128 字符。
 
 **入参**
 
@@ -1008,7 +1041,11 @@ Content-Type: application/json
 
 **请求示例**
 
-```json
+```
+POST /api/v1/scene
+X-User-Id: user_9527
+Content-Type: application/json
+
 {
   "scene_name": "客服助手",
   "description": "处理用户咨询、投诉与退款流程"
@@ -1036,6 +1073,7 @@ Content-Type: application/json
 - `scene_id` 系统自动生成，格式 `scene_xxx`
 - `scene_name` 无唯一性约束，但建议不同场景用不同名称以便区分
 - 创建后默认 `is_active=true`
+- 场景归属用户后，仅归属者可查询/修改/停用该场景，并可在其下注册智能体
 
 ---
 

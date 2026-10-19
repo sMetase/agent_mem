@@ -118,6 +118,7 @@ class Agent(Base):
     agent_id = Column(String(128), unique=True, nullable=False, index=True)
     agent_name = Column(String(256))
     scene_id = Column(String(128), nullable=True, index=True)
+    user_id = Column(String(128), nullable=True, index=True, comment="智能体归属用户（注册者），可空兼容历史数据")
     api_key_hash = Column(String(256))
     api_key_prefix = Column(String(16))
     is_active = Column(Boolean, default=True)

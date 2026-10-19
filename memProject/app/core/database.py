@@ -172,7 +172,7 @@ def bootstrap_oracle_schema_sync() -> None:
     步骤：
       1. 创建 t_memory_seq_id_seq 序列（Memory.seq_id 默认值依赖它，须在建表前存在）
       2. Base.metadata.create_all 建全部关系表；并把模型 OracleDateTime 列从 DATE 升级为 TIMESTAMP(6)
-      3. 为 t_memory 添加 embedding VECTOR 列（缺失时才加）
+      3. 为 t_memory 添加 embedding VECTOR 列（缺失时才加）；为 t_agent 幂等补 user_id 列 + 索引 + 回填
       4. 创建 HNSW 向量索引 + Oracle Text CONTEXT 全文索引（best-effort）
     """
     from sqlalchemy import create_engine
@@ -217,6 +217,20 @@ def bootstrap_oracle_schema_sync() -> None:
     if not _exists("COL", "SELECT COUNT(*) FROM user_tab_columns WHERE table_name = 'T_MEMORY' AND column_name = 'EMBEDDING'"):
         with sync_engine.begin() as conn:
             conn.execute(text("ALTER TABLE t_memory ADD (embedding VECTOR(1024, FLOAT32))"))
+    # 3.2) t_agent.user_id 列（智能体归属注册者 — 修复"控制台查不到 API 注册的智能体"）。
+    #      create_all 只建表不补列，已存在库需幂等 ALTER + 索引 + 回填；全新库此时列已存在则跳过。
+    if not _exists("COL", "SELECT COUNT(*) FROM user_tab_columns WHERE table_name = 'T_AGENT' AND column_name = 'USER_ID'"):
+        with sync_engine.begin() as conn:
+            conn.execute(text("ALTER TABLE t_agent ADD (user_id VARCHAR2(128))"))
+    if not _exists("IDX", "SELECT COUNT(*) FROM user_indexes WHERE index_name = 'IX_T_AGENT_USER_ID'"):
+        with sync_engine.begin() as conn:
+            conn.execute(text("CREATE INDEX ix_t_agent_user_id ON t_agent(user_id)"))
+    # 回填：历史智能体归属其场景 owner（无主场景保持 NULL，列表查询按场景归属兜底仍可见）
+    with sync_engine.begin() as conn:
+        conn.execute(text(
+            "UPDATE t_agent a SET a.user_id = (SELECT s.user_id FROM t_scene s "
+            "WHERE s.scene_id = a.scene_id) WHERE a.user_id IS NULL"
+        ))
     # 4) 向量 HNSW 索引（best-effort：不同 Oracle 版本语法有差异，失败不阻塞启动，仍可用顺序扫描检索）
     if not _exists("IDX_VEC", "SELECT COUNT(*) FROM user_indexes WHERE index_name = 'T_MEMORY_EMBEDDING_IDX'"):
         vec_sql = (
