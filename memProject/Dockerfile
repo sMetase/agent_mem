@@ -19,4 +19,5 @@ USER appuser
 
 EXPOSE 8000 9090
 
-CMD ["sh", "-c", "python scripts/oracle_bootstrap.py && exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 1"]
+# 启动前先跑 alembic 版本迁移（db_migrate.py，自动应用挂起迁移），再幂等建表，最后起服务
+CMD ["sh", "-c", "python scripts/db_migrate.py && python scripts/oracle_bootstrap.py && exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 1"]

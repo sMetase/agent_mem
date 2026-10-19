@@ -107,8 +107,10 @@ services:
         condition: service_started
       redis:
         condition: service_started
-    # Oracle 26ai 在宿主机独立运行；首次先幂等建表/建索引再启动服务
-    command: sh -c "python scripts/oracle_bootstrap.py && exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 1"
+    # Oracle 26ai 在宿主机独立运行；启动前先跑 alembic 版本迁移（自动应用挂起迁移，
+    # 例如本轮 t_agent.user_id 加列+索引+回填），再幂等建表/建索引，最后启动服务。
+    # 两者均幂等、零数据丢失，可重复执行；全新库由 bootstrap 负责建表。
+    command: sh -c "python scripts/db_migrate.py && python scripts/oracle_bootstrap.py && exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 1"
 
   frontend:
     build:

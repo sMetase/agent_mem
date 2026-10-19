@@ -81,13 +81,16 @@ docker compose logs -f backend
 docker compose logs -f frontend
 ```
 
-Backend 启动时会先执行数据库迁移：
+Backend 容器启动时会自动执行数据库迁移（`scripts/db_migrate.py`）：
 
-```bash
-python -m alembic upgrade head
-```
+- 已有 alembic 版本基线 → `alembic upgrade head`，自动应用挂起迁移（例如本轮
+  `t_agent.user_id` 加列+索引+回填）；
+- 无版本基线（bootstrap/create_all 管理的存量库或全新库）→ `alembic stamp head`，
+  基础 schema 由 `oracle_bootstrap.py` 的幂等建表维护。
 
-然后以单个 Uvicorn worker 启动 FastAPI，避免 L1/L2/L3 后台任务重复运行。
+然后执行幂等建表（`scripts/oracle_bootstrap.py`），最后以单个 Uvicorn worker 启动
+FastAPI，避免 L1/L2/L3 后台任务重复运行。全程幂等、零数据丢失，重复启动/重部署安全，
+无需手动执行任何迁移命令。
 
 ### 4.3 验证服务
 
