@@ -70,9 +70,26 @@ try:
         idx = [r[0] for r in c.execute(sqlalchemy.text(
             "SELECT index_name FROM user_indexes WHERE index_name IN "
             "('T_MEMORY_CONTENT_IDX','T_MEMORY_EMBEDDING_IDX')"))]
+        # 智能体归属升级（本轮修复）: t_agent.user_id 列 + 索引 + 回填完整性
+        ag_uid_col = c.execute(sqlalchemy.text(
+            "SELECT COUNT(*) FROM user_tab_columns WHERE table_name='T_AGENT' AND column_name='USER_ID'")).scalar()
+        ag_uid_idx = c.execute(sqlalchemy.text(
+            "SELECT COUNT(*) FROM user_indexes WHERE index_name='IX_T_AGENT_USER_ID'")).scalar()
+        ag_uid_gap = c.execute(sqlalchemy.text(
+            """SELECT COUNT(*) FROM t_agent a
+                WHERE a.user_id IS NULL AND EXISTS (
+                    SELECT 1 FROM t_scene s WHERE s.scene_id=a.scene_id AND s.user_id IS NOT NULL)""")).scalar()
+        ag_total = c.execute(sqlalchemy.text("SELECT COUNT(*) FROM t_agent")).scalar()
     print("    业务表 (%d): %s" % (len(tables), ", ".join(tables[:25])))
     print("    T_MEMORY.EMBEDDING VECTOR 列存在: %s" % ("是" if emb else "否!!"))
     print("    索引:", idx if idx else "（无索引 → 关键词走 jieba+INSTR，向量走顺序扫描）")
+    print("    智能体归属(t_agent.user_id): 列=%s 索引=%s (共 %s 条, 待回填 %s)"
+          % ("是" if ag_uid_col else "否!!", "有" if ag_uid_idx else "无!!",
+             ag_total, ag_uid_gap))
+    if not (ag_uid_col and ag_uid_idx):
+        print("      → 未完成升级，请执行: bash migration/upgrade_agent_ownership.sh")
+    elif ag_uid_gap:
+        print("      → 仍有 %s 条 user_id 为空但有主场景，建议重跑 upgrade_agent_ownership.sh 回填" % ag_uid_gap)
 except Exception as e:
     print("    !! 连接/校验失败:", str(e).splitlines()[0])
 eng.dispose()

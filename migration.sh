@@ -14,6 +14,7 @@
 #   bash migration.sh --skip-init-tables     # 跳过建表
 #   bash migration.sh --no-verify            # 部署后不跑健康检查
 #   bash migration.sh --migrate              # 同时执行旧 PG/Qdrant → Oracle 数据迁移（升级场景）
+#   bash migration.sh --upgrade-agent-user-id  # 预跑 t_agent.user_id 归属升级（幂等，零数据丢失）
 #   bash migration.sh --help
 #
 # 说明：
@@ -30,10 +31,11 @@ DO_BUILD=1
 DO_INIT_TABLES=1
 DO_VERIFY=1
 DO_MIGRATE=0
+DO_UPGRADE_OWNERSHIP=0
 PYTHON_BIN="${PYTHON:-python3}"
 
 usage() {
-  sed -n '3,22p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '3,23p' "$0" | sed 's/^# \{0,1\}//'
   exit 0
 }
 
@@ -43,6 +45,7 @@ while [[ $# -gt 0 ]]; do
     --skip-init-tables) DO_INIT_TABLES=0;;
     --no-verify)        DO_VERIFY=0;;
     --migrate)          DO_MIGRATE=1;;
+    --upgrade-agent-user-id) DO_UPGRADE_OWNERSHIP=1;;
     -h|--help)          usage;;
     *) echo "未知参数: $1"; usage;;
   esac
@@ -85,6 +88,14 @@ if [[ "$DO_INIT_TABLES" == "1" ]]; then
   log "==> 幂等建表 + VECTOR 列 + 全文索引 (memProject/scripts/oracle_bootstrap.py)"
   ( cd memProject && PYTHONPATH="$PWD" "$PYTHON_BIN" scripts/oracle_bootstrap.py ) \
       && log "   建表完成" || die "建表失败，见上方错误"
+fi
+
+# ---------------- 1.4) 智能体归属升级（本轮修复, 可选） ----------------
+# 对线上 Oracle 幂等执行 t_agent.user_id 加列+索引+回填；重复运行安全，不删任何数据。
+# 新镜像的 bootstrap 也会自动覆盖，但显式预跑可在「换镜像前」完成并独立复核。
+if [[ "$DO_UPGRADE_OWNERSHIP" == "1" ]]; then
+  log "==> 智能体归属升级: t_agent.user_id 加列+索引+回填 (migration/upgrade_agent_ownership.sh)"
+  bash migration/upgrade_agent_ownership.sh || die "智能体归属升级失败"
 fi
 
 # ---------------- 1.5) 旧 PG/Qdrant → Oracle 数据迁移（升级场景，可选） ----------------

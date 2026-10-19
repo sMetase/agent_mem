@@ -103,6 +103,61 @@ PYTHON=/home/lc/miniforge3/envs/mem/bin/python bash migration.sh
 
 ---
 
+## 3.7 增量升级（已有部署 → 本轮「智能体归属」修复）
+
+**背景**：`t_agent` 此前没有 `user_id`，智能体归属只靠 `scene_id → t_scene.user_id` 间接推导，
+且开发模式无 `X-User-Id` 时归属校验被整体跳过，导致「用 API 注册的智能体在控制台『智能体管理』查不到」。
+本轮修复为 `t_agent` 增加 `user_id` 列并绑定注册者。
+
+**升级脚本**：
+
+| 文件 | 作用 |
+|------|------|
+| `migration/upgrade_agent_ownership.sh` | 一键执行：加列 + 索引 + 回填 + 校验报告（**推荐**） |
+| `migration/02_agent_user_id_upgrade.sql` | 等价 SQL（供 DBA / sqlplus 手动执行或存档） |
+
+**安全保证（零数据丢失 / 丝滑）**：
+
+- 只做 `ADD` 列 / `CREATE INDEX` / 回填 `UPDATE ... WHERE user_id IS NULL`，**不 DROP、不 TRUNCATE、不改已有值**；
+- **幂等**：已升级过的库重复运行是 no-op，回滚后重跑同样安全；
+- 可在**新镜像上线前**预跑（加列是纯增量，旧代码不感知、无影响），也可上线后随时重跑复核；
+- 回填语义与后端 bootstrap（`app/core/database.py` 3.2）完全一致：
+  `t_agent.user_id = 其场景 t_scene.user_id`；无主/无场景的智能体保持 `NULL`，
+  由列表查询的「场景归属兜底」保证仍可见；
+- 新镜像的 `oracle_bootstrap` 启动时也会自动、幂等地覆盖本升级；两者重复执行互不冲突。
+
+**执行方式（任选其一）**：
+
+```bash
+cd /home/lc/agent_mem
+
+# 方式 A（推荐）：上线前预跑，独立复核后再换镜像
+bash migration/upgrade_agent_ownership.sh
+# 看到 "零数据丢失、幂等、可重复执行" 即完成；可反复运行
+
+# 方式 B：随一键部署一起跑（在 build/up 之前执行）
+PYTHON=/home/lc/miniforge3/envs/mem/bin/python bash migration.sh --upgrade-agent-user-id
+
+# 复核（标准健康检查也会自动校验 user_id 列/索引/回填）
+bash migration/verify_migration.sh
+```
+
+脚本输出示例（升级前/后计数、仍为空的均为「无主/无场景」历史数据）：
+
+```
+[upgrade] == > 目标: DEVUSER@211.87.232.203:1521/FREEPDB1
+[1/4] 升级前: t_agent 共 42 条, user_id 为空 42 条
+[2/4] 已新增列 t_agent.user_id VARCHAR2(128)
+[3/4] 已创建索引 ix_t_agent_user_id
+[4/4] 回填完成: 本次更新 40 条 (已有 user_id 的不动)
+      校验: 总数 42, 已归属 40, 仍为空 2
+      剩余 2 条: 其中 0 条场景有主 → 控制台按场景归属兜底仍可见;
+                其余为无主/无场景的历史孤儿数据, 本次升级不动它们（原行为不变）
+升级完成：零数据丢失、幂等、可重复执行。
+```
+
+---
+
 ## 4. Oracle 用户创建（第 1 步细节）
 
 DEVUSER 需要的关键权限（脚本已自动授予）：
