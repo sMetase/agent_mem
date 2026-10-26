@@ -116,6 +116,9 @@ class GenerationConfig(BaseSettings):
     # 避免配置读取异常时静默返回正则假结果（2026-07-17 全量测试事故根因之一）
     use_mock_extraction: bool = False
     use_mq_wait: bool = False
+    # 自动检测对话语言并注入抽取/生成 prompt（对齐 OpenViking 的
+    # _detect_language + output_language 模式）。关闭后保持静态"语言与输入一致"规则。
+    auto_language_detect: bool = True
 
 
 class CompressionConfig(BaseSettings):

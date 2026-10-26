@@ -16,6 +16,7 @@ from app.prompts.extraction import (
     EXTRACTION_USER_TEMPLATE,
     EXTRACTION_OUTPUT_SCHEMA,
 )
+from app.services.language_detect import language_instruction
 from app.services.llm_client import LLMClient
 
 logger = get_logger("memory_extractor")
@@ -169,14 +170,17 @@ class MemoryExtractor:
         task_context: Optional[dict] = None,
         model: Optional[str] = None,
         api_key: Optional[str] = None,
+        output_language: Optional[str] = None,
     ) -> ExtractionResult:
         if not text.strip():
             return ExtractionResult(source_text=text)
 
         try:
             user_content = EXTRACTION_USER_TEMPLATE.format(text=text)
+            # 动态语言约束：output_language 已知时追加指令，unknown/None 时为空串（保持原行为）
+            system_prompt = EXTRACTION_SYSTEM_PROMPT + language_instruction(output_language)
             data = await self._llm.extract_structured(
-                system_prompt=EXTRACTION_SYSTEM_PROMPT,
+                system_prompt=system_prompt,
                 user_content=user_content,
                 output_schema=EXTRACTION_OUTPUT_SCHEMA,
                 max_tokens=8192,

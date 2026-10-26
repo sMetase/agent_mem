@@ -99,6 +99,7 @@ class MemoryPipeline:
     DEDUP_WEIGHTS = (0.5, 0.3, 0.2)       # vector, keyword, identity
     DEDUP_THRESHOLDS = (0.90, 0.80, 0.65)  # discard, update(需identity), merge
     LLM_AUDIT_ENABLED = True                # 是否启用 LLM 深度审计
+    AUTO_LANGUAGE_DETECT = True             # 是否自动检测对话语言并注入抽取/生成 prompt
 
     def __init__(
         self,
@@ -108,6 +109,7 @@ class MemoryPipeline:
         dedup_weights: Optional[tuple[float, float, float]] = None,
         dedup_thresholds: Optional[tuple[float, float, float]] = None,
         enable_llm_audit: Optional[bool] = None,
+        auto_language_detect: Optional[bool] = None,
     ) -> None:
         self._llm = llm
         self._embedding = embedding
@@ -115,6 +117,21 @@ class MemoryPipeline:
         self.dedup_weights = dedup_weights or self.DEDUP_WEIGHTS
         self.dedup_thresholds = dedup_thresholds or self.DEDUP_THRESHOLDS
         self.enable_llm_audit = enable_llm_audit if enable_llm_audit is not None else self.LLM_AUDIT_ENABLED
+        # 开关优先级：构造函数显式参数 > GenerationConfig.auto_language_detect > 类默认
+        self.auto_language_detect = (
+            auto_language_detect
+            if auto_language_detect is not None
+            else self._resolve_auto_language_detect_default()
+        )
+
+    @staticmethod
+    def _resolve_auto_language_detect_default() -> bool:
+        """从 GenerationConfig 读取 auto_language_detect，失败时回退到类默认值。"""
+        try:
+            from app.core.config import get_settings
+            return bool(get_settings().generation.auto_language_detect)
+        except Exception:
+            return MemoryPipeline.AUTO_LANGUAGE_DETECT
 
         # 惰性初始化的子服务
         self._extractor: Optional[MemoryExtractor] = None
@@ -197,6 +214,21 @@ class MemoryPipeline:
             from app.services.llm_config import resolve_llm_config
             llm_model, llm_api_key = await resolve_llm_config(db, agent_id)
 
+        # 自动检测对话语言（方案 A）：判定为 zh/en 时注入抽取/生成 prompt，
+        # unknown 时保持原静态规则。检测失败不回退整个流程，仅跳过注入。
+        output_language: Optional[str] = None
+        if self.auto_language_detect:
+            try:
+                from app.services.language_detect import detect_language
+                output_language = detect_language(text)
+                if output_language == "unknown":
+                    output_language = None
+                else:
+                    logger.info(f"Detected conversation language: {output_language}")
+            except Exception as e:
+                logger.warning(f"Language detection failed, skipping injection: {e}")
+                output_language = None
+
         result = PipelineResult()
 
         # ========== Phase 1: Extract ==========
@@ -207,6 +239,7 @@ class MemoryPipeline:
                 task_context=task_context,
                 model=llm_model,
                 api_key=llm_api_key,
+                output_language=output_language,
             )
         except Exception as e:
             raise MemoryGenerationError(f"记忆抽取阶段失败: {str(e)}")
@@ -222,6 +255,7 @@ class MemoryPipeline:
                 extraction_result,
                 model=llm_model,
                 api_key=llm_api_key,
+                output_language=output_language,
             )
         except Exception as e:
             raise MemoryGenerationError(f"记忆生成阶段失败: {str(e)}")

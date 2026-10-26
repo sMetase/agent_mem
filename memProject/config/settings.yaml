@@ -93,6 +93,8 @@ generation:
   # 开发期需要 Mock 请在本地改动、勿提交，或用独立的 settings.local.yaml
   use_mock_extraction: false
   use_mq_wait: false
+  # 自动检测对话语言并注入抽取/生成 prompt（默认开启，false 则保留静态"语言与输入一致"规则）
+  auto_language_detect: true
 
 # 记忆压缩配置
 compression:

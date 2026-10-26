@@ -17,6 +17,7 @@ from app.prompts.memory_generation import (
     MEMORY_GENERATION_USER_TEMPLATE,
     MEMORY_GENERATION_OUTPUT_SCHEMA,
 )
+from app.services.language_detect import language_instruction
 from app.services.llm_client import LLMClient
 from app.services.memory_extractor import ExtractionResult
 
@@ -69,12 +70,15 @@ class MemoryGenerator:
         extraction_result: ExtractionResult,
         model: Optional[str] = None,
         api_key: Optional[str] = None,
+        output_language: Optional[str] = None,
     ) -> list[MemoryCandidate]:
         """
         从抽取结果生成结构化记忆。
 
         Args:
             extraction_result: MemoryExtractor 的输出
+            output_language: 自动检测到的对话语言（"zh"/"en"），用于动态约束
+                记忆文本语言；None/unknown 时保留静态"语言与输入一致"规则
 
         Returns:
             MemoryCandidate 列表
@@ -109,7 +113,7 @@ class MemoryGenerator:
             )
 
             llm_result = await self._llm.extract_structured(
-                system_prompt=MEMORY_GENERATION_SYSTEM_PROMPT,
+                system_prompt=MEMORY_GENERATION_SYSTEM_PROMPT + language_instruction(output_language),
                 user_content=user_content,
                 output_schema=MEMORY_GENERATION_OUTPUT_SCHEMA,
                 max_tokens=4000,  # 记忆生成可能返回多条，需要更大输出空间
